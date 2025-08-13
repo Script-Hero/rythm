@@ -130,17 +130,37 @@ export const BacktestProvider = ({ children }) => {
     
     setIsLoadingDateRange(true);
     try {
-      const response = await fetch(`http://localhost:8000/api/market/symbols/${encodeURIComponent(symbol)}/date-range`);
-      const dateRange = await response.json();
+      // FAKE DATA FOR DEMO - TODO: Replace with real API call
+      console.warn(`🔧 DEMO MODE: Using fake date range data for symbol ${symbol}`);
+      
+      // Simulate API delay
+      await new Promise(resolve => setTimeout(resolve, 500));
+      
+      // Generate fake date range (last 2 years)
+      const endDate = new Date();
+      const startDate = new Date();
+      startDate.setFullYear(endDate.getFullYear() - 2);
+      
+      const dateRange = {
+        available: true,
+        earliest_date: startDate.toISOString().split('T')[0],
+        latest_date: endDate.toISOString().split('T')[0],
+        symbol: symbol,
+        data_points: Math.floor(Math.random() * 1000) + 500, // Random number between 500-1500
+        _fake_data: true
+      };
       
       setSymbolDateRange(dateRange);
       
       // Only set initial dates if they're not already set
       if (dateRange.available && (!fromDate || !toDate)) {
-        setFromDate(dateRange.earliest_date);
+        // Set default to last 6 months
+        const defaultStart = new Date();
+        defaultStart.setMonth(defaultStart.getMonth() - 6);
+        setFromDate(defaultStart.toISOString().split('T')[0]);
         setToDate(dateRange.latest_date);
       }
-      // Let the date picker handle all other validation and adjustment
+      
     } catch (error) {
       console.error('Failed to fetch date range:', error);
       setSymbolDateRange({ available: false });

@@ -47,10 +47,25 @@ const BacktestControls = ({
     setLoadingStrategies(true);
     try {
       const response = await apiService.listStrategies({ include_templates: false });
-      setSavedStrategies(response.strategies);
+      
+      // Handle the new standard response format
+      if (response.success && response.data && response.data.strategies) {
+        setSavedStrategies(response.data.strategies);
+      } else if (Array.isArray(response)) {
+        // Fallback for old format
+        setSavedStrategies(response);
+      } else if (response.strategies) {
+        // Another fallback format
+        setSavedStrategies(response.strategies);
+      } else {
+        console.warn('🔧 DEMO MODE: No saved strategies found, using empty array');
+        setSavedStrategies([]);
+      }
     } catch (error) {
       console.error('Failed to load saved strategies:', error);
-      toast.error('Failed to load saved strategies');
+      console.warn('🔧 DEMO MODE: Using empty strategies array due to API error');
+      toast.error('Failed to load saved strategies (using demo mode)');
+      setSavedStrategies([]); // Set empty array as fallback
     } finally {
       setLoadingStrategies(false);
     }
@@ -101,7 +116,7 @@ const BacktestControls = ({
           <div className="text-left sm:text-right">
             <label className="text-sm font-medium text-gray-700">Strategy</label>
             <div className="text-xs text-gray-500 mt-1 hidden lg:block">
-              {savedStrategies.find(s => s.id === selectedStrategy)?.description ||
+              {(savedStrategies && savedStrategies.find(s => s.id === selectedStrategy)?.description) ||
                allTemplates.find(t => t.key === selectedStrategy)?.description ||
                'Select a trading strategy'}
             </div>
@@ -113,7 +128,7 @@ const BacktestControls = ({
                   <div className="flex items-center gap-2">
                     <Database className="h-4 w-4 text-gray-500" />
                     <span className="font-medium truncate ">
-                      {savedStrategies.find(s => s.id === selectedStrategy)?.name ||
+                      {(savedStrategies && savedStrategies.find(s => s.id === selectedStrategy)?.name) ||
                        allTemplates.find(t => t.key === selectedStrategy)?.name}
                     </span>
                   </div>
@@ -121,7 +136,7 @@ const BacktestControls = ({
               </SelectValue>
             </SelectTrigger>
             <SelectContent className="w-64">
-              {savedStrategies.length > 0 && (
+              {savedStrategies && savedStrategies.length > 0 && (
                 <>
                   <div className="px-3 py-2 text-sm font-semibold text-gray-700 bg-gray-50 flex items-center gap-2">
                     <Database className="h-4 w-4" />
@@ -276,9 +291,21 @@ const BacktestControls = ({
                     </div>
                     {symbolDateRange?.available && (
                       <div className="pt-2 border-t">
-                        <div className="text-xs text-gray-500 mb-1">Available Data Range:</div>
+                        <div className="text-xs text-gray-500 mb-1">
+                          Available Data Range:
+                          {symbolDateRange._fake_data && (
+                            <span className="ml-1 px-1 py-0.5 bg-orange-100 text-orange-600 text-[10px] rounded font-medium">
+                              DEMO
+                            </span>
+                          )}
+                        </div>
                         <div className="text-xs">
                           {new Date(symbolDateRange.earliest_date).toLocaleDateString()} - {new Date(symbolDateRange.latest_date).toLocaleDateString()}
+                          {symbolDateRange._fake_data && (
+                            <div className="text-[10px] text-orange-600 mt-1">
+                              ⚠️ Using simulated data for demo
+                            </div>
+                          )}
                         </div>
                       </div>
                     )}
