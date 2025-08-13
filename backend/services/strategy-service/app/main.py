@@ -22,12 +22,13 @@ from shared.models.strategy_models import (
     StrategyCreate, StrategyUpdate, StrategyResponse, 
     StrategyCompilationResult, StrategySearchResult, StrategyStats
 )
-from shared.models.user_models import User
+from shared.models.user_models import UserResponse
 from shared.strategy_engine import StrategyCompiler, get_available_nodes
+from shared.auth_dependency import get_current_user
+from shared.auth_client import close_auth_client
 
 from .config import settings
 from .services import DatabaseService, RedisService, StrategyTemplateService
-from .auth import get_current_user
 
 # Configure logging
 structlog.configure(
@@ -61,6 +62,7 @@ async def lifespan(app: FastAPI):
     logger.info("🛑 Shutting down Strategy Service")
     await DatabaseService.close()
     await RedisService.close()
+    await close_auth_client()
 
 
 app = FastAPI(
@@ -75,7 +77,7 @@ app = FastAPI(
 @app.post("/", response_model=StrategyResponse)
 async def create_strategy(
     strategy: StrategyCreate,
-    current_user: User = Depends(get_current_user)
+    current_user: UserResponse = Depends(get_current_user)
 ) -> StrategyResponse:
     """Create a new strategy."""
     try:
@@ -135,7 +137,8 @@ async def list_strategies(
     category: Optional[str] = None,
     include_templates: bool = True,
     limit: int = 50,
-    offset: int = 0
+    offset: int = 0,
+    current_user: UserResponse = Depends(get_current_user)
 ) -> List[StrategyResponse]:
     """List user's strategies."""
     try:
@@ -160,7 +163,7 @@ async def list_strategies(
 @app.get("/{strategy_id}", response_model=StrategyResponse)
 async def get_strategy(
     strategy_id: UUID,
-    current_user: User = Depends(get_current_user)
+    current_user: UserResponse = Depends(get_current_user)
 ) -> StrategyResponse:
     """Get a specific strategy."""
     try:
@@ -188,7 +191,7 @@ async def get_strategy(
 async def update_strategy(
     strategy_id: UUID,
     strategy_update: StrategyUpdate,
-    current_user: User = Depends(get_current_user)
+    current_user: UserResponse = Depends(get_current_user)
 ) -> StrategyResponse:
     """Update an existing strategy."""
     try:
@@ -247,7 +250,7 @@ async def update_strategy(
 @app.delete("/{strategy_id}")
 async def delete_strategy(
     strategy_id: UUID,
-    current_user: User = Depends(get_current_user)
+    current_user: UserResponse = Depends(get_current_user)
 ) -> Dict[str, Any]:
     """Delete a strategy."""
     try:
@@ -280,7 +283,7 @@ async def delete_strategy(
 @app.post("/{strategy_id}/compile", response_model=StrategyCompilationResult)
 async def compile_strategy(
     strategy_id: UUID,
-    current_user: User = Depends(get_current_user)
+    current_user: UserResponse = Depends(get_current_user)
 ) -> StrategyCompilationResult:
     """Compile and validate a strategy."""
     try:
@@ -325,7 +328,7 @@ async def compile_strategy(
 @app.post("/{strategy_id}/duplicate", response_model=StrategyResponse)
 async def duplicate_strategy(
     strategy_id: UUID,
-    current_user: User = Depends(get_current_user)
+    current_user: UserResponse = Depends(get_current_user)
 ) -> StrategyResponse:
     """Duplicate an existing strategy."""
     try:
@@ -372,7 +375,7 @@ async def search_strategies(
     category: Optional[str] = None,
     limit: int = 20,
     offset: int = 0,
-    current_user: User = Depends(get_current_user)
+    current_user: UserResponse = Depends(get_current_user)
 ) -> StrategySearchResult:
     """Search strategies by name or description."""
     try:
@@ -399,10 +402,10 @@ async def search_strategies(
         )
 
 
-@app.get("/stats", response_model=StrategyStats)
+@app.get("/stats")
 async def get_strategy_stats(
-    current_user: User = Depends(get_current_user)
-) -> StrategyStats:
+    current_user: UserResponse = Depends(get_current_user)
+):
     """Get strategy statistics for the user."""
     try:
         stats = await DatabaseService.get_user_strategy_stats(current_user.id)
@@ -436,7 +439,7 @@ async def list_templates() -> List[StrategyResponse]:
 async def create_from_template(
     template_name: str,
     strategy_name: str,
-    current_user: User = Depends(get_current_user)
+    current_user: UserResponse = Depends(get_current_user)
 ) -> StrategyResponse:
     """Create a strategy from a template."""
     try:

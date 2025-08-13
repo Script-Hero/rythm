@@ -4,227 +4,217 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## AlgoTrade Beta2 - Full-Stack Trading Platform
 
-This repository contains a comprehensive algorithmic trading platform with a React TypeScript frontend and Python microservices backend architecture.
+This is a comprehensive algorithmic trading platform with a microservices backend and React frontend, designed for building, backtesting, and forward testing trading strategies using visual node-based programming.
 
-## Project Structure
+### Architecture Overview
 
-### Frontend: React + TypeScript + Vite (`AlgoTradeFrontend/`)
-- **Technology Stack**: React 19, TypeScript, Vite, TailwindCSS, Radix UI
-- **Architecture**: Component-based with modern React patterns
-- **Key Features**: Strategy builder (node-based), backtesting UI, forward testing dashboard, live trading interface
+**AlgoTrade Beta2** is a cloud-native, event-driven trading platform consisting of:
+- **Frontend**: React + TypeScript + Vite application with visual strategy builder
+- **Backend**: 7 Python microservices using FastAPI with Kafka event streaming
+- **Infrastructure**: PostgreSQL, Redis, Kafka for data persistence and real-time processing
 
-### Backend: Microservices Architecture (`backend/`)
-- **Status**: ✅ Production-ready with Kafka event streaming
-- **Innovation**: Redis sliding window optimization for sub-millisecond market data access
-- **Services**: API Gateway, Market Data, Strategy, Forward Testing, Backtesting, Notifications, Analytics
+### Key Innovation: Redis Sliding Window Optimization
+- Centralized Redis streams with sliding windows (default 1000 recent ticks)
+- Strategies access data via `GET /api/market/symbols/BTCUSD/latest?limit=100`
+- Sub-millisecond latency for market data access
+- Eliminates individual strategy data management overhead
 
-## Development Commands
+### Development Commands
 
-### Frontend Development (`AlgoTradeFrontend/`)
+#### Frontend Development (React + TypeScript + Vite)
 ```bash
-# Development server with hot reload
-npm run dev
-
-# Build for production
-npm run build
-
-# Lint TypeScript and React code
-npm run lint
-
-# Preview production build
-npm run preview
-
-# Type checking
-npx tsc --noEmit
+cd frontend/
+npm install                  # Install dependencies
+npm run dev                 # Start development server (localhost:5173)
+npm run build              # Build for production (TypeScript check + Vite build)
+npm run lint               # Run ESLint
+npm run preview            # Preview production build
 ```
 
-### Backend Development (`backend/`)
-
-#### **Infrastructure Setup**
+#### Backend Development (Python Microservices)
 ```bash
-# Start core infrastructure (required first)
-docker-compose up kafka redis postgres -d
+cd backend/
 
-# Setup Kafka topics (run once after infrastructure start)
+# Start full infrastructure
+docker-compose up --build                    # Start all services
+docker-compose up kafka redis postgres -d    # Infrastructure only
+
+# Setup Kafka topics (run once after Kafka starts)
 python setup_kafka.py
 
-# Start all services
-docker-compose up --build
+# Individual service development with hot reload
+cd services/api-gateway/
+uvicorn app.main:app --port 8000 --reload
 
-# Development mode (single service with hot reload)
+cd services/market-data-service/
+uvicorn app.main:app --port 8001 --reload
+
+cd services/strategy-service/
+uvicorn app.main:app --port 8002 --reload
+
 cd services/forward-test-service/
 uvicorn app.main:app --port 8003 --reload
 ```
 
-#### **Service Health Checks**
+#### Database Management
 ```bash
-# Check all service health
-curl http://localhost:8000/health/detailed  # API Gateway
-curl http://localhost:8001/health           # Market Data Service  
-curl http://localhost:8002/health           # Strategy Service
-curl http://localhost:8003/health           # Forward Testing Service
+# Initialize database schema
+docker-compose exec postgres psql -U algotrade -d algotrade -f /init-db.sql
+
+# View strategy compilation reports
+docker-compose exec postgres psql -U algotrade -d algotrade
+SELECT name, compilation_report FROM strategies WHERE user_id = 'user-uuid';
+
+# Monitor Redis sliding windows
+docker-compose exec redis redis-cli
+> XLEN market:BTCUSD
+> XREVRANGE market:BTCUSD + - COUNT 10
 ```
 
-#### **Database Operations**
+#### Health Checks & Monitoring
 ```bash
-# Connect to PostgreSQL
-docker-compose exec postgres psql -U algotrade -d algotrade
-
-# View Redis sliding windows
-docker-compose exec redis redis-cli
-> XREVRANGE market:BTCUSD + - COUNT 10
+# Service health checks
+curl http://localhost:8000/health/detailed  # API Gateway
+curl http://localhost:8001/health           # Market Data Service
+curl http://localhost:8002/health           # Strategy Service
+curl http://localhost:8003/health           # Forward Testing Service
 
 # Monitor Kafka topics
 docker-compose exec kafka kafka-console-consumer --bootstrap-server localhost:9092 --topic market-data-updates
-```
-
-## Core Architecture Concepts
-
-### Redis Sliding Window Innovation
-- **Problem Solved**: Traditional systems require each strategy to manage data storage
-- **Solution**: Centralized Redis streams with configurable windows (default: 1000 recent ticks)
-- **Access Pattern**: `GET /api/market/symbols/BTCUSD/latest?limit=100` for instant data
-- **Performance**: Sub-millisecond latency, supports thousands of concurrent strategies
-
-### Event-Driven Flow
-```
-Market Data → Kafka → Redis Sliding Windows → Forward Testing → Trade Execution → WebSocket Updates
-                ↓
-          Strategy Service → Strategy Signals → Portfolio Updates → User Notifications
-```
-
-### Service Architecture
-
-| Service | Port | Key Functionality |
-|---------|------|-------------------|
-| API Gateway | 8000 | JWT auth, routing, rate limiting |
-| Market Data | 8001 | Redis sliding windows, WebSocket feeds |
-| Strategy | 8002 | Visual node-based strategy compilation |
-| Forward Testing | 8003 | Multi-session paper trading |
-| Backtesting | 8004 | Distributed backtesting engine |
-| Notifications | 8005 | WebSocket real-time updates |
-| Analytics | 8006 | Performance metrics & reporting |
-
-### Frontend Architecture (`AlgoTradeFrontend/`)
-
-#### **Page Structure**
-- **Build Algorithm** (`/build_algorithm`): Visual strategy builder with React Flow
-- **Backtest** (`/backtest`): Historical strategy testing with comprehensive analytics
-- **Forward Testing** (`/forward_testing`): Live paper trading with multi-session support
-- **Live Dashboard** (`/live_dashboard`): Real-time market data and strategy monitoring
-- **Strategies** (`/strategies`): Strategy management and browsing
-
-#### **Key Components**
-- **Strategy Nodes** (`components/nodes/`): 20+ node types (indicators, logic, actions)
-- **Charts** (`components/charts/`): Backtesting analytics and live data visualization  
-- **UI Library** (`components/ui/`): Radix UI components with TailwindCSS styling
-
-#### **State Management**
-- **React Context**: ForwardTestingContext for session management
-- **React Hook Form**: Form validation with Zod schemas
-- **React Router**: Client-side routing
-
-## Common Development Workflows
-
-### Adding New Strategy Nodes
-1. Create node component in `AlgoTradeFrontend/src/components/nodes/`
-2. Add node type to `backend/shared/strategy_engine/nodes.py`
-3. Update node registry in Strategy Service
-4. Test compilation and execution
-
-### Creating New Service
-1. Copy service template from existing service
-2. Add service to `docker-compose.yml`
-3. Update shared models if needed
-4. Add service health check to API Gateway
-
-### Frontend API Integration
-- **Base URL**: API Gateway at `http://localhost:8000`
-- **Authentication**: JWT tokens via `/auth/login`
-- **TypeScript Types**: Defined in `src/types/`
-
-## Important File Locations
-
-### Configuration Files
-- **Frontend**: `AlgoTradeFrontend/package.json`, `tsconfig.json`, `vite.config.ts`
-- **Backend**: `backend/docker-compose.yml`, service-specific `requirements.txt`
-- **Database**: `backend/init-db.sql`
-
-### Shared Libraries (`backend/shared/`)
-- **Strategy Engine**: Node-based strategy compilation and execution
-- **Kafka Client**: Producer/consumer utilities with error handling
-- **Data Models**: Pydantic models for all services
-
-## Testing
-
-### Frontend Testing
-```bash
-# No test framework currently configured
-# Consider adding Vitest + React Testing Library
-```
-
-### Backend Testing  
-```bash
-# Run tests for individual services
-cd services/forward-test-service/
-pytest tests/ -v
-
-# Integration tests
-docker-compose -f docker-compose.test.yml up --build
-```
-
-## Environment Setup
-
-### Required Environment Variables
-```bash
-# External API keys
-FINNHUB_TOKEN=your_finnhub_token
-COINBASE_API_KEY=your_coinbase_key
-
-# S3 Storage (for backtesting results)
-S3_ENDPOINT=your_s3_endpoint  
-S3_ACCESS_KEY=your_access_key
-S3_SECRET_KEY=your_secret_key
-```
-
-## Performance Considerations
-
-### Frontend Optimization
-- **Code Splitting**: Lazy load pages and heavy components
-- **React Flow**: Optimize node rendering for large strategies
-- **Chart Performance**: Use efficient charting libraries (Recharts, ECharts)
-
-### Backend Optimization
-- **Redis Memory**: Configure sliding window sizes appropriately
-- **Kafka Partitioning**: Scale topics based on message volume
-- **Database Indexing**: User-scoped queries optimized
-- **Connection Pooling**: Async database connections
-
-## Architecture Benefits
-
-### Key Features
-- **Authentication**: JWT with rate limiting
-- **Market Data**: Redis sliding window optimization for sub-millisecond access
-- **Strategy System**: Visual node-based compilation with 20+ node types
-- **Trading**: Multi-session paper trading with realistic execution
-- **Event System**: Comprehensive 8-topic Kafka event streaming
-
-## Troubleshooting
-
-### Common Issues
-- **Kafka Connection**: Ensure topics setup with `python setup_kafka.py`
-- **Database Schema**: Check `init-db.sql` applied correctly
-- **Redis Memory**: Monitor with `docker-compose exec redis redis-cli info memory`
-- **TypeScript Errors**: Run `npm run lint` in frontend
-
-### Debug Commands
-```bash
-# View service logs
-docker-compose logs -f market-data-service
-
-# Check Kafka topics
 docker-compose exec kafka kafka-topics --bootstrap-server localhost:9092 --list
-
-# Monitor Redis streams  
-docker-compose exec redis redis-cli XLEN market:BTCUSD
 ```
+
+### Frontend Architecture
+
+#### Technology Stack
+- **React 19** with TypeScript
+- **Vite** for build tooling and dev server
+- **Tailwind CSS 4** for styling
+- **Radix UI** components for accessible UI primitives
+- **React Flow (@xyflow/react)** for visual strategy builder
+- **React Router DOM** for navigation
+- **Recharts & ECharts** for data visualization
+- **Socket.io-client** for real-time updates
+
+#### Key Components Structure
+```
+src/
+├── components/
+│   ├── strategies/          # Visual strategy builder (React Flow)
+│   ├── forward_testing/     # Forward testing UI components
+│   ├── charts/             # Chart components (backtest + live)
+│   ├── dashboard/          # Live dashboard components
+│   └── ui/                 # Shadcn/ui components (Radix UI + Tailwind)
+├── pages/
+│   ├── build_algorithm/    # Visual strategy builder page
+│   ├── backtest/          # Backtesting interface
+│   ├── forward_testing/   # Forward testing management
+│   └── live_dashboard/    # Real-time trading dashboard
+├── contexts/              # React contexts for state management
+├── hooks/                # Custom React hooks
+└── services/             # API client functions
+```
+
+#### Visual Strategy Builder
+- **Node-based programming** using React Flow
+- **20+ node types**: Indicators (SMA, EMA, RSI, MACD), Logic (AND, OR, Compare), Actions (Buy, Sell, Position Size)
+- **Real-time validation** and compilation
+- **Template system** for common strategies
+- **Export/import** strategy configurations
+
+### Backend Architecture
+
+#### Microservices (Ports 8000-8006)
+1. **API Gateway** (8000): FastAPI with JWT auth, request routing, CORS
+2. **Market Data Service** (8001): Real-time WebSocket feeds, Redis sliding windows
+3. **Strategy Service** (8002): Node-based strategy compilation engine
+4. **Forward Testing Service** (8003): Multi-session paper trading with realistic execution
+5. **Backtesting Service** (8004): Historical strategy testing with S3 storage
+6. **Notification Service** (8005): WebSocket connection management
+7. **Analytics Service** (8006): Performance metrics and risk analysis
+
+#### Event-Driven Architecture
+- **Kafka Topics**: Market data, strategy signals, trade executions, notifications
+- **Redis Streams**: Sliding window market data cache
+- **PostgreSQL**: Relational data (users, strategies, sessions, trades)
+
+#### Core Data Flow
+```
+Market Data → Kafka → Redis Sliding Windows → Strategy Service → Signals
+                                                      ↓
+Forward Testing Service → Paper Trades → Portfolio Updates → WebSocket Updates
+```
+
+### Database Schema
+
+#### Key Relationships
+- Users (1:N) → Strategies, ForwardTestSessions, BacktestResults
+- ForwardTestSessions (1:N) → Trades, PortfolioPositions, ChartData
+- Strategies → (N:N) Sessions/Backtests (strategy snapshots preserved)
+
+### Testing
+
+#### Frontend Tests
+```bash
+cd frontend/
+# No specific test framework configured - check package.json for additions
+```
+
+#### Backend Tests
+```bash
+cd backend/
+# Each service has a tests/ directory
+# Run individual service tests:
+cd services/forward-test-service/
+python -m pytest tests/
+```
+
+### Common Workflows
+
+#### Adding New Trading Strategy Node
+1. Create node component in `frontend/src/components/nodes/[category]/`
+2. Add node type to `frontend/src/pages/build_algorithm/config/nodeTypes.js`
+3. Update backend strategy engine in `backend/shared/strategy_engine/nodes.py`
+4. Add compilation logic in `backend/shared/strategy_engine/compiler.py`
+
+#### Creating New Microservice
+1. Create service directory in `backend/services/[service-name]/`
+2. Add Dockerfile and requirements.txt
+3. Update docker-compose.yml with service definition
+4. Add health check endpoint
+5. Register with API Gateway routing
+
+#### Forward Testing Workflow
+1. Build strategy using visual editor
+2. Compile strategy via Strategy Service
+3. Create forward testing session with starting capital
+4. Session spawns background strategy execution
+5. Real-time portfolio updates via WebSocket
+6. Performance metrics calculated continuously
+
+### Environment Variables
+
+#### Backend Services
+- `DATABASE_URL`: PostgreSQL connection string
+- `REDIS_URL`: Redis connection string  
+- `KAFKA_BOOTSTRAP_SERVERS`: Kafka broker addresses
+- `FINNHUB_TOKEN`: Market data API token
+- `S3_*`: Object storage credentials for backtesting results
+
+#### Development Setup
+1. Copy environment variables from docker-compose.yml
+2. Install backend dependencies: `pip install -r requirements.txt` (per service)
+3. Install frontend dependencies: `npm install`
+4. Start infrastructure: `docker-compose up kafka redis postgres -d`
+5. Setup Kafka: `python setup_kafka.py`
+6. Start services individually for development
+
+### Performance Considerations
+
+- **Redis sliding windows** provide sub-millisecond data access
+- **Kafka partitioning** enables horizontal scaling
+- **WebSocket connections** minimize frontend polling
+- **Database indexing** optimized for user-scoped queries
+- **Strategy compilation** cached in Redis
+
+This platform supports thousands of concurrent strategies with real-time execution and comprehensive backtesting capabilities.

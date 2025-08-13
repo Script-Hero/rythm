@@ -7,7 +7,12 @@ import structlog
 from fastapi import APIRouter, HTTPException, Depends, status
 from typing import Dict, Any
 
-from ..auth import get_current_user
+import sys
+import os
+
+# Add shared modules to path
+sys.path.append(os.path.join(os.path.dirname(__file__), '../../../..'))
+from shared.auth_dependency import get_current_user
 
 logger = structlog.get_logger()
 

@@ -11,6 +11,7 @@ from typing import Dict, Any
 
 import structlog
 import uvicorn
+import httpx
 from fastapi import FastAPI, Request, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 # from fastapi.middleware.trustedhost import TrustedHostMiddleware
@@ -21,8 +22,7 @@ from slowapi.errors import RateLimitExceeded
 from prometheus_client import Counter, Histogram, generate_latest, CONTENT_TYPE_LATEST
 
 from .config import settings
-from .auth import get_current_user
-from .routers import auth, strategies, forward_testing, backtesting, market_data, analytics
+from .routers import strategies, forward_testing, backtesting, market_data, analytics
 from .middleware import LoggingMiddleware
 from .services import DatabaseService, RedisService
 
@@ -183,8 +183,7 @@ async def metrics():
     return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 
-# API Routes
-app.include_router(auth.router, prefix="/api/auth", tags=["authentication"])
+# API Routes - Auth routes proxied to auth-service
 app.include_router(strategies.router, prefix="/api/strategies", tags=["strategies"])
 app.include_router(forward_testing.router, prefix="/api/forward-test", tags=["forward-testing"])
 app.include_router(backtesting.router, prefix="/api/backtest", tags=["backtesting"])
@@ -227,6 +226,59 @@ async def general_exception_handler(request: Request, exc: Exception):
             "path": str(request.url)
         }
     )
+
+
+# Auth service proxy routes
+@app.post("/api/auth/{path:path}")
+@app.get("/api/auth/{path:path}")
+async def proxy_auth_routes(path: str, request: Request):
+    """Proxy all auth routes to auth service."""
+    auth_service_url = "http://auth-service:8007"
+    
+    # Forward the request to auth service
+    async with httpx.AsyncClient() as client:
+        try:
+            # Prepare request data
+            method = request.method
+            url = f"{auth_service_url}/{path}"
+            headers = dict(request.headers)
+            # Remove host header to avoid conflicts
+            headers.pop("host", None)
+            
+            # Get request body if present
+            body = None
+            if method in ["POST", "PUT", "PATCH"]:
+                body = await request.body()
+            
+            # Forward request
+            response = await client.request(
+                method=method,
+                url=url,
+                headers=headers,
+                content=body,
+                params=dict(request.query_params),
+                timeout=30.0
+            )
+            
+            # Return response with same status and content
+            return JSONResponse(
+                content=response.json() if response.content else {},
+                status_code=response.status_code,
+                headers=dict(response.headers)
+            )
+            
+        except httpx.RequestError as e:
+            logger.error("Auth service request failed", error=str(e))
+            raise HTTPException(
+                status_code=503,
+                detail="Authentication service unavailable"
+            )
+        except Exception as e:
+            logger.error("Auth proxy error", error=str(e))
+            raise HTTPException(
+                status_code=500,
+                detail="Authentication proxy error"
+            )
 
 
 # Rate limited endpoints

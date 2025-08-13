@@ -78,12 +78,24 @@ class ApiService {
       const response = await fetch(url, config);
       
       if (!response.ok) {
-        if (response.status === 401) {
+        if (response.status === 401 || response.status === 403) {
           this.clearAuthToken();
-          throw new Error('Not authenticated');
+          // Trigger a page reload to redirect to login
+          if (window.location.pathname !== '/login') {
+            window.location.href = '/login';
+          }
+          throw new Error('Authentication required');
         }
-        const errorData = await response.json();
-        throw new Error(errorData.error || `HTTP error! status: ${response.status}`);
+        
+        let errorMessage = `HTTP error! status: ${response.status}`;
+        try {
+          const errorData = await response.json();
+          errorMessage = errorData.error || errorData.detail || errorMessage;
+        } catch {
+          // Failed to parse error response, use default message
+        }
+        
+        throw new Error(String(errorMessage));
       }
 
       return await response.json();
@@ -126,7 +138,7 @@ class ApiService {
     return this.getAuthToken() !== null;
   }
 
-  async initializeDevAuth(): Promise<void> {
+  async initializeAuth(): Promise<void> {
     if (this.isAuthenticated()) {
       try {
         await this.getCurrentUser();
@@ -137,15 +149,7 @@ class ApiService {
         this.clearAuthToken();
       }
     }
-
-    console.log('🔧 DEV MODE: Auto-authenticating with demo account...');
-    try {
-      await this.login('demo', 'demo123');
-      console.log('✅ Authenticated as demo user');
-    } catch (error) {
-      console.log('❌ Demo auth failed, user might need to be created');
-      throw error;
-    }
+    // User needs to login manually - no auto-auth
   }
 
   // Strategy CRUD operations
@@ -221,9 +225,7 @@ class ApiService {
   async createForwardTestSession(data: { name: string; strategy: any; settings: any }): Promise<{ success: boolean; session_id: string; message: string }> {
     return this.request('/api/forward-test/', {
       method: 'POST',
-      headers: {
-        'X-User-ID': this.getUserId()
-      },
+      headers: {},
       body: JSON.stringify(data),
     });
   }
@@ -268,7 +270,7 @@ class ApiService {
   async deleteForwardTestSession(sessionId: string): Promise<{ success: boolean; message: string }> {
     return this.request(`/api/forward-test/${sessionId}`, {
       method: 'DELETE',
-      headers: { 'X-User-ID': this.getUserId() }
+      headers: {}
     });
   }
 
@@ -291,7 +293,7 @@ class ApiService {
     }
   }> {
     return this.request(`/api/forward-test/${sessionId}`, {
-      headers: { 'X-User-ID': this.getUserId() }
+      headers: {}
     });
   }
 
@@ -305,7 +307,7 @@ class ApiService {
     sessions: any[];
   }> {
     return this.request('/api/forward-test/', {
-      headers: { 'X-User-ID': this.getUserId() }
+      headers: {}
     });
   }
 
@@ -318,9 +320,7 @@ class ApiService {
   }> {
     const result = await this.request('/api/forward-test/restore', {
       method: 'POST',
-      headers: {
-        'X-User-ID': this.getUserId()
-      },
+      headers: {},
       body: JSON.stringify({ session_id: sessionId }),
     });
     
@@ -338,16 +338,6 @@ class ApiService {
     return result;
   }
 
-  // Simple user identification for multi-user support
-  private getUserId(): string {
-    // Generate or retrieve user ID from localStorage
-    let userId = localStorage.getItem('algotrade_user_id');
-    if (!userId) {
-      userId = 'user_' + Math.random().toString(36).substr(2, 9);
-      localStorage.setItem('algotrade_user_id', userId);
-    }
-    return userId;
-  }
 }
 
 export const apiService = new ApiService();

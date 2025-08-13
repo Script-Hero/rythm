@@ -63,6 +63,29 @@ services:
       retries: 5
 
   # Core Microservices
+  auth-service:
+    build: ./services/auth-service
+    container_name: algotrade-auth
+    ports:
+      - "8007:8007"
+    environment:
+      DATABASE_URL: postgresql://algotrade:algotrade_pass@postgres:5432/algotrade
+      REDIS_URL: redis://redis:6379/0
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-your-secret-key-change-in-production}
+      JWT_EXPIRE_MINUTES: ${JWT_EXPIRE_MINUTES:-1440}
+      DEV_MODE: ${DEV_MODE:-true}
+      DEBUG: ${DEBUG:-true}
+    volumes:
+      - ./services/auth-service/app:/app/app
+      - ./shared:/app/shared:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - algotrade
+    restart: unless-stopped
   api-gateway:
     build: ./services/api-gateway
     container_name: algotrade-api-gateway
@@ -73,6 +96,8 @@ services:
       REDIS_URL: "redis://redis:6379"
       KAFKA_BOOTSTRAP_SERVERS: "kafka:9092"
       POSTGRES_URL: "postgresql://algotrade:algotrade_pass@postgres:5432/algotrade"
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-your-secret-key-change-in-production}
+      JWT_EXPIRE_MINUTES: ${JWT_EXPIRE_MINUTES:-1440}
     depends_on:
       redis:
         condition: service_healthy
@@ -123,6 +148,8 @@ services:
         condition: service_healthy
       kafka:
         condition: service_healthy
+      auth-service:
+        condition: service_started
     networks:
       - algotrade
     volumes:

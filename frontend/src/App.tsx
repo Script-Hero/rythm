@@ -6,8 +6,9 @@ import { SidebarProvider, SidebarInset } from "@/components/ui/sidebar";
 import { MainSidebar } from '@/components/layout';
 import { Toaster } from "@/components/ui/sonner";
 import { ForwardTestingProvider } from '@/contexts/ForwardTestingContext';
+import { AuthProvider } from '@/contexts/AuthContext';
+import { ProtectedRoute } from '@/components/auth/ProtectedRoute';
 import { GlobalForwardTestIndicator } from '@/components/forward_testing/GlobalForwardTestIndicator';
-import { apiService } from '@/services/api';
 
 // Pages
 import LiveDashboard from './pages/live_dashboard/LiveDashboard.jsx';
@@ -18,29 +19,12 @@ import StrategiesPage from './pages/strategies/StrategiesPage';
 import ForwardTestingManager from './pages/forward_testing/ForwardTestingManager';
 import SessionCreationWizard from './pages/forward_testing/SessionCreationWizard';
 import SessionDetailView from './pages/forward_testing/SessionDetailView';
+import LoginPage from './pages/auth/LoginPage';
 
 function App() {
   const location = useLocation();
   const navigate = useNavigate();
   const [activeView, setActiveView] = useState('dashboard');
-  const [authInitialized, setAuthInitialized] = useState(false);
-
-  // Initialize authentication on app start
-  useEffect(() => {
-    const initAuth = async () => {
-      try {
-        await apiService.initializeDevAuth();
-        console.log('🎉 DEV AUTH: Ready to use AlgoTrade with demo user!');
-      } catch (error) {
-        console.error('❌ DEV AUTH FAILED:', error);
-        console.log('📝 The demo user may need to be created in the database first');
-      } finally {
-        setAuthInitialized(true);
-      }
-    };
-
-    initAuth();
-  }, []);
 
   // Sync activeView with current route
   useEffect(() => {
@@ -80,41 +64,39 @@ function App() {
     }
   };
 
-  // Show loading until auth is initialized
-  if (!authInitialized) {
-    return (
-      <div className="flex h-screen w-screen items-center justify-center">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto mb-4"></div>
-          <p className="text-sm text-gray-600">Initializing authentication...</p>
-        </div>
-      </div>
-    );
-  }
 
   return (
-    <ForwardTestingProvider>
-      <SidebarProvider>
-        <div className="flex h-screen w-screen" style={{ '--sidebar-width': '14rem' } as React.CSSProperties}>
-          <MainSidebar activeView={activeView} onViewChange={handleViewChange} />
-          <SidebarInset className="flex-1 overflow-x-hidden overflow-y-auto">
-            <Routes>
-              <Route path='/' element={<EnhancedLiveDashboard/>}/>
-              <Route path='/live_view' element={<EnhancedLiveDashboard/>}/>
-              <Route path='/live_view/legacy' element={<LiveDashboard/>}/>
-              <Route path='/builder' element={<BuildAlgorithmPage/>}/>
-              <Route path='/backtest' element={<BacktestPage/>} />
-              <Route path='/strategies' element={<StrategiesPage/>} />
-              <Route path='/forward-testing' element={<ForwardTestingManager/>} />
-              <Route path='/forward-testing/create' element={<SessionCreationWizard/>} />
-              <Route path='/forward-testing/session/:sessionId' element={<SessionDetailView/>} />
-            </Routes>
-          </SidebarInset>
-        </div>
-        <GlobalForwardTestIndicator />
-        <Toaster />
-      </SidebarProvider>
-    </ForwardTestingProvider>
+    <AuthProvider>
+      <Routes>
+        <Route path='/login' element={<LoginPage />} />
+        <Route path='/*' element={
+          <ProtectedRoute>
+            <ForwardTestingProvider>
+              <SidebarProvider>
+                <div className="flex h-screen w-screen" style={{ '--sidebar-width': '14rem' } as React.CSSProperties}>
+                  <MainSidebar activeView={activeView} onViewChange={handleViewChange} />
+                  <SidebarInset className="flex-1 overflow-x-hidden overflow-y-auto">
+                    <Routes>
+                      <Route path='/' element={<EnhancedLiveDashboard/>}/>
+                      <Route path='/live_view' element={<EnhancedLiveDashboard/>}/>
+                      <Route path='/live_view/legacy' element={<LiveDashboard/>}/>
+                      <Route path='/builder' element={<BuildAlgorithmPage/>}/>
+                      <Route path='/backtest' element={<BacktestPage/>} />
+                      <Route path='/strategies' element={<StrategiesPage/>} />
+                      <Route path='/forward-testing' element={<ForwardTestingManager/>} />
+                      <Route path='/forward-testing/create' element={<SessionCreationWizard/>} />
+                      <Route path='/forward-testing/session/:sessionId' element={<SessionDetailView/>} />
+                    </Routes>
+                  </SidebarInset>
+                </div>
+                <GlobalForwardTestIndicator />
+                <Toaster />
+              </SidebarProvider>
+            </ForwardTestingProvider>
+          </ProtectedRoute>
+        } />
+      </Routes>
+    </AuthProvider>
   );
 }
 

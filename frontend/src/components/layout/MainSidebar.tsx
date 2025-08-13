@@ -17,7 +17,8 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Home, TrendingUp, Beaker, Database, Settings, LogOut, ChevronDown, Play } from "lucide-react";
+import { Home, TrendingUp, Beaker, Database, Settings, LogOut, ChevronDown, Play, User } from "lucide-react";
+import { useAuth } from '@/contexts/AuthContext';
 
 interface MainSidebarProps {
   activeView: string;
@@ -25,8 +26,19 @@ interface MainSidebarProps {
 }
 
 export function MainSidebar({ activeView, onViewChange }: MainSidebarProps) {
-  const fullName = "Ahmad R";
-  const username = "contrafy";
+  const { user, logout } = useAuth();
+  
+  const fullName = user?.username || "User";
+  const username = user?.username || "user";
+  const userEmail = user?.email || "";
+  
+  const handleLogout = async () => {
+    try {
+      await logout();
+    } catch (error) {
+      console.error('Logout failed:', error);
+    }
+  };
 
   const menuItems = [
     {
@@ -103,7 +115,7 @@ export function MainSidebar({ activeView, onViewChange }: MainSidebarProps) {
                   </Avatar>
                   <div className="grid flex-1 text-left text-sm leading-tight">
                     <span className="truncate font-semibold">{fullName}</span>
-                    <span className="truncate text-xs text-muted-foreground">@{username}</span>
+                    <span className="truncate text-xs text-muted-foreground">{userEmail || `@${username}`}</span>
                   </div>
                   <ChevronDown size={16} className="ml-auto" />
                 </SidebarMenuButton>
@@ -115,10 +127,14 @@ export function MainSidebar({ activeView, onViewChange }: MainSidebarProps) {
                 sideOffset={4}
               >
                 <DropdownMenuItem>
+                  <User size={16} />
+                  Profile
+                </DropdownMenuItem>
+                <DropdownMenuItem>
                   <Settings size={16} />
                   Settings
                 </DropdownMenuItem>
-                <DropdownMenuItem>
+                <DropdownMenuItem onClick={handleLogout}>
                   <LogOut size={16} />
                   Log out
                 </DropdownMenuItem>

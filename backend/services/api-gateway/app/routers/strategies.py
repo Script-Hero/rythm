@@ -7,8 +7,12 @@ import httpx
 import structlog
 from fastapi import APIRouter, HTTPException, Depends, Request, status
 from typing import Dict, Any
+import sys
+import os
 
-from ..auth import get_current_user
+# Add shared modules to path
+sys.path.append(os.path.join(os.path.dirname(__file__), '../../../..'))
+from shared.auth_dependency import get_current_user
 
 logger = structlog.get_logger()
 
@@ -23,7 +27,8 @@ async def proxy_to_strategy_service(
     path: str, 
     current_user,
     body: Dict[str, Any] = None,
-    params: Dict[str, str] = None
+    params: Dict[str, str] = None,
+    auth_header: str = None
 ) -> Dict[str, Any]:
     """Helper function to proxy requests to Strategy Service."""
     try:
@@ -31,6 +36,10 @@ async def proxy_to_strategy_service(
             "Content-Type": "application/json",
             "X-User-ID": str(current_user.id)
         }
+        
+        # Forward Authorization header to microservice
+        if auth_header:
+            headers["Authorization"] = auth_header
         
         async with httpx.AsyncClient(timeout=30.0) as client:
             url = f"{STRATEGY_SERVICE_URL}{path}"
@@ -85,7 +94,8 @@ async def create_strategy(
 ):
     """Create a new strategy."""
     body = await request.json()
-    return await proxy_to_strategy_service("POST", "/", current_user, body)
+    auth_header = request.headers.get("authorization")
+    return await proxy_to_strategy_service("POST", "/", current_user, body, auth_header=auth_header)
 
 
 @router.get("/")
@@ -95,16 +105,19 @@ async def list_strategies(
 ):
     """List user's strategies."""
     params = dict(request.query_params)
-    return await proxy_to_strategy_service("GET", "/", current_user, params=params)
+    auth_header = request.headers.get("authorization")
+    return await proxy_to_strategy_service("GET", "/", current_user, params=params, auth_header=auth_header)
 
 
 @router.get("/{strategy_id}")
 async def get_strategy(
     strategy_id: str,
+    request: Request,
     current_user = Depends(get_current_user)
 ):
     """Get a specific strategy."""
-    return await proxy_to_strategy_service("GET", f"/{strategy_id}", current_user)
+    auth_header = request.headers.get("authorization")
+    return await proxy_to_strategy_service("GET", f"/{strategy_id}", current_user, auth_header=auth_header)
 
 
 @router.put("/{strategy_id}")
@@ -150,7 +163,9 @@ async def search_strategies(
 
 @router.get("/stats")
 async def get_strategy_stats(
+    request: Request,
     current_user = Depends(get_current_user)
 ):
     """Get strategy statistics."""
-    return await proxy_to_strategy_service("GET", "/stats", current_user)
+    auth_header = request.headers.get("authorization")
+    return await proxy_to_strategy_service("GET", "/stats", current_user, auth_header=auth_header)

@@ -86,11 +86,18 @@ export default function StrategiesPage() {
       setStats(statsData);
     } catch (error) {
       console.error('Failed to load stats:', error);
+      // Set default stats to prevent undefined errors
+      setStats({
+        total_strategies: 0,
+        custom_strategies: 0,
+        templates: 0,
+        categories: [],
+      });
     }
   };
 
   const filterStrategies = () => {
-    let filtered = strategies;
+    let filtered = strategies || [];
 
     if (searchQuery.trim()) {
       const query = searchQuery.toLowerCase();
@@ -244,7 +251,7 @@ export default function StrategiesPage() {
               <CardTitle className="text-sm font-medium text-gray-600">Categories</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold">{stats.categories.length}</div>
+              <div className="text-2xl font-bold">{stats.categories?.length || 0}</div>
             </CardContent>
           </Card>
         </div>

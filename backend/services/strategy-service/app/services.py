@@ -61,9 +61,16 @@ class DatabaseService:
         return [], 0
     
     @staticmethod
-    async def get_user_strategy_stats(*args, **kwargs):
-        """Get user strategy stats - PLACEHOLDER."""
-        return None
+    async def get_user_strategy_stats(user_id: UUID):
+        """Get user strategy stats."""
+        # For now, return mock stats since database isn't implemented
+        # Return dict that matches frontend expectations
+        return {
+            "total_strategies": 0,
+            "custom_strategies": 0,
+            "templates": 0,
+            "categories": []
+        }
 
 
 class RedisService:
