@@ -16,11 +16,12 @@ class Settings(BaseSettings):
     # Database
     DATABASE_URL: str = os.getenv(
         "DATABASE_URL", 
-        "postgresql://algotrade:algotrade@postgres:5432/algotrade"
+        "postgresql://algotrade:algotrade_pass@postgres:5432/algotrade"
     )
     
     # Redis
     REDIS_URL: str = os.getenv("REDIS_URL", "redis://redis:6379/0")
+    REDIS_STRATEGY_CACHE_TTL: int = 3600  # 1 hour cache for compiled strategies
     
     # Kafka
     KAFKA_BOOTSTRAP_SERVERS: str = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "kafka:9092")

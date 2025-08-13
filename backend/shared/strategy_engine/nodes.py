@@ -4,10 +4,14 @@ Ported and enhanced from Beta1 architecture.
 """
 
 import time
+import structlog
 from abc import ABC, abstractmethod
 from collections import deque
 from typing import Any, Dict, List, Optional, Set, Tuple
 from decimal import Decimal
+
+# Configure structured logging
+logger = structlog.get_logger("strategy_nodes")
 
 # Node registry
 NODE_REGISTRY: Dict[str, type] = {}
@@ -37,6 +41,13 @@ class Node(ABC):
         self.position = position
         self.state = {}  # Node-specific state
         self.last_update = 0
+        
+        logger.info("🧩 Node initialized", 
+                   node_id=node_id,
+                   node_type=getattr(self, 'node_type', type(self).__name__),
+                   data_keys=list(data.keys()),
+                   inputs=self.inputs,
+                   outputs=self.outputs)
     
     @abstractmethod
     def compute(self, **inputs) -> Dict[str, Any]:
@@ -45,8 +56,14 @@ class Node(ABC):
     
     def reset_state(self):
         """Reset node state."""
+        old_state = dict(self.state)
         self.state = {}
         self.last_update = 0
+        
+        logger.info("🔄 Node state reset", 
+                   node_id=self.id,
+                   node_type=getattr(self, 'node_type', type(self).__name__),
+                   old_state_keys=list(old_state.keys()))
     
     def get_state_summary(self) -> Dict[str, Any]:
         """Get summary of node state for debugging."""
@@ -65,16 +82,30 @@ class PriceNode(Node):
     outputs = ("price-out",)
     
     def compute(self, **inputs) -> Dict[str, Any]:
+        logger.info("💰 PriceNode computing", 
+                   node_id=self.id,
+                   inputs_received=list(inputs.keys()),
+                   inputs_content={k: str(v) for k, v in inputs.items()})
+        
         symbol = self.data.get("symbol", "BACKTEST_DATA")
         price_type = self.data.get("priceType", "close")
+        
+        logger.info("💰 PriceNode configuration", 
+                   symbol=symbol,
+                   price_type=price_type,
+                   node_data=self.data)
         
         # In microservices, this will get data from Market Data Service
         # For now, return mock data for compilation testing
         if symbol == "BACKTEST_DATA":
-            return {"price-out": Decimal('100.0')}
+            result = {"price-out": Decimal('100.0')}
+            logger.info("💰 PriceNode returning mock data", result=result)
+            return result
         
         # This would be replaced with actual market data call
-        return {"price-out": Decimal('100.0')}
+        result = {"price-out": Decimal('100.0')}
+        logger.info("💰 PriceNode returning default data", result=result)
+        return result
 
 
 @register_node("volumeNode") 
@@ -83,8 +114,19 @@ class VolumeNode(Node):
     outputs = ("volume-out",)
     
     def compute(self, **inputs) -> Dict[str, Any]:
+        logger.info("📊 VolumeNode computing", 
+                   node_id=self.id,
+                   inputs_received=list(inputs.keys()),
+                   inputs_content={k: str(v) for k, v in inputs.items()})
+        
         symbol = self.data.get("symbol", "BACKTEST_DATA")
-        return {"volume-out": Decimal('1000.0')}
+        logger.info("📊 VolumeNode configuration", 
+                   symbol=symbol,
+                   node_data=self.data)
+        
+        result = {"volume-out": Decimal('1000.0')}
+        logger.info("📊 VolumeNode returning data", result=result)
+        return result
 
 
 # Indicator Nodes
@@ -94,18 +136,47 @@ class SMANode(Node):
     outputs = ("sma-out",)
     
     def compute(self, price_in=None, **inputs) -> Dict[str, Any]:
+        logger.info("📈 SMANode computing", 
+                   node_id=self.id,
+                   price_in=str(price_in),
+                   inputs_received=list(inputs.keys()),
+                   current_state_keys=list(self.state.keys()))
+        
         if price_in is None:
+            logger.warning("⚠️ SMANode received None price input", node_id=self.id)
             return {"sma-out": None}
         
         period = int(self.data.get("period", 20))
+        logger.info("📈 SMANode configuration", 
+                   node_id=self.id,
+                   period=period,
+                   node_data=self.data)
+        
         prices = self.state.setdefault("prices", deque(maxlen=period))
+        old_len = len(prices)
         
         prices.append(float(price_in))
+        logger.info("📈 SMANode price added", 
+                   node_id=self.id,
+                   new_price=float(price_in),
+                   prices_count_before=old_len,
+                   prices_count_after=len(prices),
+                   prices_window=list(prices))
         
         if len(prices) >= period:
             sma = sum(prices) / len(prices)
-            return {"sma-out": Decimal(str(sma))}
+            result = {"sma-out": Decimal(str(sma))}
+            logger.info("✅ SMANode calculated SMA", 
+                       node_id=self.id,
+                       sma_value=sma,
+                       prices_used=len(prices),
+                       result=result)
+            return result
         
+        logger.info("⏳ SMANode waiting for more prices", 
+                   node_id=self.id,
+                   current_count=len(prices),
+                   needed_count=period)
         return {"sma-out": None}
 
 
@@ -363,14 +434,34 @@ class CompareNode(Node):
     outputs = ("result-out",)
     
     def compute(self, value1_in=None, value2_in=None, **inputs) -> Dict[str, Any]:
+        logger.info("⚖️ CompareNode computing", 
+                   node_id=self.id,
+                   value1_in=str(value1_in),
+                   value2_in=str(value2_in),
+                   inputs_received=list(inputs.keys()))
+        
         if value1_in is None or value2_in is None:
+            logger.warning("⚠️ CompareNode received None inputs", 
+                         node_id=self.id,
+                         value1_in=value1_in,
+                         value2_in=value2_in)
             return {"result-out": False}
         
         operator = self.data.get("operator", "greater_than")
+        logger.info("⚖️ CompareNode configuration", 
+                   node_id=self.id,
+                   operator=operator,
+                   node_data=self.data)
         
         try:
             val1 = float(value1_in)
             val2 = float(value2_in)
+            
+            logger.info("⚖️ CompareNode values converted", 
+                       node_id=self.id,
+                       val1=val1,
+                       val2=val2,
+                       operator=operator)
             
             if operator == "greater_than":
                 result = val1 > val2
@@ -383,10 +474,26 @@ class CompareNode(Node):
             elif operator == "less_equal":
                 result = val1 <= val2
             else:
+                logger.warning("⚠️ Unknown operator", 
+                             node_id=self.id,
+                             operator=operator)
                 result = False
             
+            logger.info("✅ CompareNode result", 
+                       node_id=self.id,
+                       val1=val1,
+                       operator=operator,
+                       val2=val2,
+                       result=result,
+                       comparison=f"{val1} {operator} {val2} = {result}")
+            
             return {"result-out": result}
-        except (ValueError, TypeError):
+        except (ValueError, TypeError) as e:
+            logger.error("❌ CompareNode conversion error", 
+                        node_id=self.id,
+                        value1_in=value1_in,
+                        value2_in=value2_in,
+                        error=str(e))
             return {"result-out": False}
 
 
@@ -561,16 +668,32 @@ class BuyNode(Node):
     outputs = ("signal-out",)
     
     def compute(self, trigger_in=None, **inputs) -> Dict[str, Any]:
+        logger.info("🟢 BuyNode computing", 
+                   node_id=self.id,
+                   trigger_in=trigger_in,
+                   inputs_received=list(inputs.keys()),
+                   node_data=self.data)
+        
         if trigger_in:
             quantity = self.data.get("quantity", 100)
             order_type = self.data.get("orderType", "market")
-            return {
-                "signal-out": {
-                    "action": "BUY",
-                    "quantity": quantity,
-                    "order_type": order_type
-                }
+            
+            signal = {
+                "action": "BUY",
+                "quantity": quantity,
+                "order_type": order_type
             }
+            
+            logger.info("🎯 BuyNode generating BUY signal", 
+                       node_id=self.id,
+                       signal=signal,
+                       trigger_value=trigger_in)
+            
+            return {"signal-out": signal}
+        
+        logger.info("⏸️ BuyNode not triggered", 
+                   node_id=self.id,
+                   trigger_in=trigger_in)
         return {"signal-out": None}
 
 
@@ -580,16 +703,32 @@ class SellNode(Node):
     outputs = ("signal-out",)
     
     def compute(self, trigger_in=None, **inputs) -> Dict[str, Any]:
+        logger.info("🔴 SellNode computing", 
+                   node_id=self.id,
+                   trigger_in=trigger_in,
+                   inputs_received=list(inputs.keys()),
+                   node_data=self.data)
+        
         if trigger_in:
             quantity = self.data.get("quantity", 100)
             order_type = self.data.get("orderType", "market")
-            return {
-                "signal-out": {
-                    "action": "SELL", 
-                    "quantity": quantity,
-                    "order_type": order_type
-                }
+            
+            signal = {
+                "action": "SELL", 
+                "quantity": quantity,
+                "order_type": order_type
             }
+            
+            logger.info("🎯 SellNode generating SELL signal", 
+                       node_id=self.id,
+                       signal=signal,
+                       trigger_value=trigger_in)
+            
+            return {"signal-out": signal}
+        
+        logger.info("⏸️ SellNode not triggered", 
+                   node_id=self.id,
+                   trigger_in=trigger_in)
         return {"signal-out": None}
 
 

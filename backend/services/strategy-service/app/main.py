@@ -84,12 +84,44 @@ async def create_strategy(
     current_user: UserResponse = Depends(get_current_user)
 ):
     """Create a new strategy."""
+    logger.info("🆕 Creating new strategy", 
+               user_id=str(current_user.id),
+               user_email=current_user.email,
+               user_username=current_user.username,
+               strategy_name=strategy.name,
+               strategy_category=strategy.category,
+               strategy_tags=strategy.tags,
+               is_template=strategy.is_template)
+    
+    # Log strategy structure details
+    if hasattr(strategy, 'json_tree') and strategy.json_tree:
+        nodes = strategy.json_tree.get("nodes", [])
+        edges = strategy.json_tree.get("edges", [])
+        logger.info("📊 Strategy structure received", 
+                   node_count=len(nodes),
+                   edge_count=len(edges),
+                   node_types=[node.get("type") for node in nodes])
+    else:
+        logger.warning("⚠️ No json_tree provided in strategy", strategy_name=strategy.name)
+    
     try:
         # Validate and compile strategy
+        logger.info("🔧 Starting strategy compilation")
         compiler = StrategyCompiler()
         compilation_result = compiler.compile_strategy(strategy.json_tree)
         
+        logger.info("🔧 Compilation completed", 
+                   success=compilation_result.success,
+                   error_count=len(compilation_result.errors) if compilation_result.errors else 0,
+                   warning_count=len(compilation_result.warnings) if compilation_result.warnings else 0,
+                   unknown_nodes_count=len(compilation_result.unknown_nodes) if compilation_result.unknown_nodes else 0)
+        
         if not compilation_result.success:
+            logger.error("❌ Strategy compilation failed", 
+                        errors=compilation_result.errors,
+                        unknown_nodes=compilation_result.unknown_nodes,
+                        warnings=compilation_result.warnings)
+            
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail={
@@ -100,6 +132,7 @@ async def create_strategy(
             )
         
         # Save to database
+        logger.info("💾 Saving strategy to database")
         db_strategy = await DatabaseService.create_strategy(
             user_id=current_user.id,
             name=strategy.name,
@@ -111,28 +144,38 @@ async def create_strategy(
             is_template=strategy.is_template
         )
         
+        logger.info("💾 Strategy saved to database", 
+                   strategy_id=str(db_strategy['id']) if db_strategy else "None")
+        
         # Cache compiled strategy in Redis
+        logger.info("🔄 Caching compiled strategy in Redis")
         await RedisService.cache_compiled_strategy(
-            str(db_strategy.id),
+            str(db_strategy['id']),
             compilation_result.strategy_instance
         )
         
-        logger.info(
-            "Strategy created",
-            strategy_id=str(db_strategy.id),
+        logger.info("✅ Strategy creation completed successfully",
+            strategy_id=str(db_strategy['id']),
             user_id=str(current_user.id),
-            name=strategy.name
+            name=strategy.name,
+            compilation_success=compilation_result.success
         )
         
         return CreationResponse.strategy_created(
-            strategy_id=str(db_strategy.id),
+            strategy_id=str(db_strategy['id']),
             message="Strategy created successfully"
         )
         
-    except HTTPException:
+    except HTTPException as he:
+        logger.error("❌ HTTP exception during strategy creation", 
+                    status_code=he.status_code,
+                    detail=he.detail)
         raise
     except Exception as e:
-        logger.error("Strategy creation failed", error=str(e))
+        logger.exception("💥 Unexpected error during strategy creation", 
+                        error=str(e),
+                        strategy_name=strategy.name,
+                        user_id=str(current_user.id))
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Strategy creation failed"
@@ -394,28 +437,67 @@ async def compile_strategy(
     current_user: UserResponse = Depends(get_current_user)
 ):
     """Compile and validate a strategy."""
+    logger.info("🔧 Compiling strategy", 
+               strategy_id=str(strategy_id),
+               user_id=str(current_user.id))
+    
     try:
         # Get strategy
+        logger.info("📋 Fetching strategy from database", strategy_id=str(strategy_id))
         strategy = await DatabaseService.get_strategy_by_id(strategy_id, current_user.id)
         if not strategy:
+            logger.error("❌ Strategy not found", 
+                        strategy_id=str(strategy_id),
+                        user_id=str(current_user.id))
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Strategy not found"
             )
         
+        logger.info("📊 Strategy found for compilation", 
+                   strategy_id=str(strategy_id),
+                   strategy_name=getattr(strategy, 'name', 'Unknown'),
+                   json_tree_present=hasattr(strategy, 'json_tree') and strategy.json_tree is not None)
+        
+        # Log strategy structure
+        if hasattr(strategy, 'json_tree') and strategy.json_tree:
+            nodes = strategy.json_tree.get("nodes", [])
+            edges = strategy.json_tree.get("edges", [])
+            logger.info("📊 Strategy structure for compilation", 
+                       node_count=len(nodes),
+                       edge_count=len(edges),
+                       node_types=[node.get("type") for node in nodes])
+        
         # Compile strategy
+        logger.info("🔧 Starting compilation process")
         compiler = StrategyCompiler()
         result = compiler.compile_strategy(strategy.json_tree)
         
+        logger.info("🔧 Compilation process completed", 
+                   success=result.success,
+                   error_count=len(result.errors) if result.errors else 0,
+                   warning_count=len(result.warnings) if result.warnings else 0,
+                   unknown_nodes_count=len(result.unknown_nodes) if result.unknown_nodes else 0)
+        
+        if not result.success:
+            logger.error("❌ Compilation failed", 
+                        strategy_id=str(strategy_id),
+                        errors=result.errors,
+                        unknown_nodes=result.unknown_nodes)
+        
         # Update compilation report in database
+        logger.info("💾 Updating compilation report in database")
         await DatabaseService.update_compilation_report(strategy_id, result.to_dict())
         
         # Cache if successful
         if result.success and result.strategy_instance:
+            logger.info("🔄 Caching compiled strategy")
             await RedisService.cache_compiled_strategy(
                 str(strategy_id),
                 result.strategy_instance
             )
+        else:
+            logger.info("⏭️ Skipping cache due to compilation failure or missing strategy instance")
         
         compilation_result = StrategyCompilationResult(
             success=result.success,
@@ -423,15 +505,25 @@ async def compile_strategy(
             error="; ".join(result.errors) if result.errors else None
         )
         
+        logger.info("✅ Compilation endpoint completed", 
+                   strategy_id=str(strategy_id),
+                   success=result.success)
+        
         return StandardResponse.success_response(
             data=compilation_result,
             message="Strategy compilation completed"
         )
         
-    except HTTPException:
+    except HTTPException as he:
+        logger.error("❌ HTTP exception during compilation", 
+                    strategy_id=str(strategy_id),
+                    status_code=he.status_code,
+                    detail=he.detail)
         raise
     except Exception as e:
-        logger.error("Strategy compilation failed", strategy_id=str(strategy_id), error=str(e))
+        logger.exception("💥 Unexpected error during compilation", 
+                        strategy_id=str(strategy_id), 
+                        error=str(e))
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Compilation failed"
@@ -471,7 +563,7 @@ async def duplicate_strategy(
             is_template=False  # Duplicates are never templates
         )
         
-        logger.info("Strategy duplicated", original_id=str(strategy_id), new_id=str(duplicated.id))
+        logger.info("Strategy duplicated", original_id=str(strategy_id), new_id=str(duplicated['id']))
         
         return StandardResponse.success_response(
             data=duplicated,
@@ -536,10 +628,10 @@ async def create_from_template(
             is_template=False
         )
         
-        logger.info("Strategy created from template", template=template_name, strategy_id=str(created_strategy.id))
+        logger.info("Strategy created from template", template=template_name, strategy_id=str(created_strategy['id']))
         
         return CreationResponse.strategy_created(
-            strategy_id=str(created_strategy.id),
+            strategy_id=str(created_strategy['id']),
             message="Strategy created from template successfully"
         )
         

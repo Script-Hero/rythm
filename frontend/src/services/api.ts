@@ -64,6 +64,13 @@ class ApiService {
   ): Promise<T> {
     const url = `${API_BASE_URL}${endpoint}`;
     
+    console.log('🌐 Frontend: API Request', {
+      endpoint: endpoint,
+      method: options.method || 'GET',
+      hasBody: !!options.body,
+      bodyPreview: options.body ? JSON.stringify(JSON.parse(options.body as string), null, 2).slice(0, 500) : null
+    });
+    
     const token = this.getAuthToken();
     const config: RequestInit = {
       headers: {
@@ -74,12 +81,22 @@ class ApiService {
       ...options,
     };
 
-
     try {
+      const startTime = Date.now();
       const response = await fetch(url, config);
+      const duration = Date.now() - startTime;
+      
+      console.log('📡 Frontend: API Response', {
+        endpoint: endpoint,
+        status: response.status,
+        statusText: response.statusText,
+        duration: `${duration}ms`,
+        ok: response.ok
+      });
       
       if (!response.ok) {
         if (response.status === 401 || response.status === 403) {
+          console.warn('🔒 Frontend: Authentication failed, redirecting to login');
           this.clearAuthToken();
           // Trigger a page reload to redirect to login
           if (window.location.pathname !== '/login') {
@@ -91,6 +108,11 @@ class ApiService {
         let errorMessage = `HTTP error! status: ${response.status}`;
         try {
           const errorData = await response.json();
+          console.error('❌ Frontend: API Error Details', {
+            endpoint: endpoint,
+            status: response.status,
+            errorData: errorData
+          });
           errorMessage = errorData.error || errorData.detail || errorMessage;
         } catch {
           // Failed to parse error response, use default message
@@ -99,9 +121,21 @@ class ApiService {
         throw new Error(String(errorMessage));
       }
 
-      return await response.json();
+      const responseData = await response.json();
+      console.log('✅ Frontend: API Success', {
+        endpoint: endpoint,
+        responseKeys: Object.keys(responseData),
+        hasData: !!responseData.data,
+        success: responseData.success
+      });
+      
+      return responseData;
     } catch (error) {
-      console.error(`API request failed: ${endpoint}`, error);
+      console.error('💥 Frontend: API Request Exception', {
+        endpoint: endpoint,
+        error: error.message,
+        method: options.method || 'GET'
+      });
       throw error;
     }
   }
@@ -174,22 +208,62 @@ class ApiService {
 
   // Strategy CRUD operations
   async saveStrategy(data: SaveStrategyRequest): Promise<{ success: boolean; id: string; message: string }> {
+    console.log('🆕 Frontend: Saving strategy', {
+      name: data.name,
+      category: data.category,
+      tags: data.tags,
+      nodeCount: data.nodes?.length || 0,
+      edgeCount: data.edges?.length || 0,
+      nodeTypes: data.nodes?.map(node => node.type) || [],
+      isUpdate: !!data.id
+    });
+
     const { nodes, edges, ...strategyData } = data;
     const requestBody = {
       ...strategyData,
       json_tree: { nodes, edges }
     };
     
-    const response = await this.request<{ success: boolean; data: { id: string }; message: string }>('/api/strategies/', {
-      method: 'POST',
-      body: JSON.stringify(requestBody),
+    console.log('📊 Frontend: Strategy structure being sent', {
+      strategyData: strategyData,
+      nodeStructure: nodes?.map(node => ({
+        id: node.id,
+        type: node.type,
+        dataKeys: Object.keys(node.data || {})
+      })) || [],
+      edgeStructure: edges?.map(edge => ({
+        source: edge.source,
+        target: edge.target,
+        sourceHandle: edge.sourceHandle,
+        targetHandle: edge.targetHandle
+      })) || []
     });
     
-    return {
-      success: response.success,
-      id: response.data?.id || '',
-      message: response.message
-    };
+    try {
+      const response = await this.request<{ success: boolean; data: { id: string }; message: string }>('/api/strategies/', {
+        method: 'POST',
+        body: JSON.stringify(requestBody),
+      });
+      
+      console.log('✅ Frontend: Strategy save response', {
+        success: response.success,
+        id: response.data?.id,
+        message: response.message
+      });
+      
+      return {
+        success: response.success,
+        id: response.data?.id || '',
+        message: response.message
+      };
+    } catch (error) {
+      console.error('❌ Frontend: Strategy save failed', {
+        error: error.message,
+        strategyName: data.name,
+        nodeCount: nodes?.length || 0
+      });
+      throw error;
+    }
   }
 
   async getStrategy(id: string): Promise<Strategy> {
@@ -213,22 +287,62 @@ class ApiService {
   }
 
   async updateStrategy(id: string, data: SaveStrategyRequest): Promise<{ success: boolean; id: string; message: string }> {
+    console.log('📝 Frontend: Updating strategy', {
+      strategyId: id,
+      name: data.name,
+      category: data.category,
+      tags: data.tags,
+      nodeCount: data.nodes?.length || 0,
+      edgeCount: data.edges?.length || 0,
+      nodeTypes: data.nodes?.map(node => node.type) || []
+    });
+
     const { nodes, edges, ...strategyData } = data;
     const requestBody = {
       ...strategyData,
       json_tree: { nodes, edges }
     };
     
-    const response = await this.request<{ success: boolean; data: any; message: string }>(`/api/strategies/${id}`, {
-      method: 'PUT',
-      body: JSON.stringify(requestBody),
+    console.log('📊 Frontend: Updated strategy structure', {
+      strategyId: id,
+      nodeStructure: nodes?.map(node => ({
+        id: node.id,
+        type: node.type,
+        dataKeys: Object.keys(node.data || {})
+      })) || [],
+      edgeStructure: edges?.map(edge => ({
+        source: edge.source,
+        target: edge.target,
+        sourceHandle: edge.sourceHandle,
+        targetHandle: edge.targetHandle
+      })) || []
     });
     
-    return {
-      success: response.success,
-      id: id, // Use the passed ID for updates
-      message: response.message
-    };
+    try {
+      const response = await this.request<{ success: boolean; data: any; message: string }>(`/api/strategies/${id}`, {
+        method: 'PUT',
+        body: JSON.stringify(requestBody),
+      });
+      
+      console.log('✅ Frontend: Strategy update response', {
+        strategyId: id,
+        success: response.success,
+        message: response.message
+      });
+      
+      return {
+        success: response.success,
+        id: id, // Use the passed ID for updates
+        message: response.message
+      };
+    } catch (error) {
+      console.error('❌ Frontend: Strategy update failed', {
+        strategyId: id,
+        error: error.message,
+        strategyName: data.name
+      });
+      throw error;
+    }
   }
 
   async deleteStrategy(id: string): Promise<{ success: boolean; message: string }> {
