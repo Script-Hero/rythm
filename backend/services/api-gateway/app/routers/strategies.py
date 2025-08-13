@@ -95,7 +95,7 @@ async def create_strategy(
     """Create a new strategy."""
     body = await request.json()
     auth_header = request.headers.get("authorization")
-    return await proxy_to_strategy_service("POST", "/", current_user, body, auth_header=auth_header)
+    return await proxy_to_strategy_service("POST", "/", current_user, body=body, auth_header=auth_header)
 
 
 @router.get("/")
@@ -158,7 +158,8 @@ async def update_strategy(
 ):
     """Update a strategy."""
     body = await request.json()
-    return await proxy_to_strategy_service("PUT", f"/{strategy_id}", current_user, body)
+    auth_header = request.headers.get("authorization")
+    return await proxy_to_strategy_service("PUT", f"/{strategy_id}", current_user, body=body, auth_header=auth_header)
 
 
 @router.delete("/{strategy_id}")
@@ -178,6 +179,7 @@ async def duplicate_strategy(
 ):
     """Duplicate a strategy."""
     body = await request.json()
-    return await proxy_to_strategy_service("POST", f"/{strategy_id}/duplicate", current_user, body)
+    auth_header = request.headers.get("authorization")
+    return await proxy_to_strategy_service("POST", f"/{strategy_id}/duplicate", current_user, body=body, auth_header=auth_header)
 
 

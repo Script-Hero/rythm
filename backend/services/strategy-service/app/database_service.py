@@ -156,7 +156,8 @@ class DatabaseService:
         """
         
         async with self.pool.acquire() as conn:
-            return await conn.fetchrow(query, *params)
+            row = await conn.fetchrow(query, *params)
+            return dict(row) if row else None
     
     async def delete_strategy(self, strategy_id: UUID, user_id: UUID) -> bool:
         """Soft delete a strategy"""
