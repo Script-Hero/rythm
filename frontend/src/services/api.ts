@@ -267,7 +267,10 @@ class ApiService {
   }
 
   async getStrategy(id: string): Promise<Strategy> {
-    return this.request(`/api/strategies/${id}`);
+    const response: any = await this.request(`/api/strategies/${id}`);
+    console.log('📦 getStrategy response structure:', response);
+    // Backend returns StandardResponse with {success, data, message}
+    return response.data || response;
   }
 
   async listStrategies(params?: {

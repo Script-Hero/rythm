@@ -27,23 +27,44 @@ export const useStrategyStateManager = () => {
   useEffect(() => {
     loadSavedStrategies(setSavedStrategies);
     const loadParam = searchParams.get('load');
-    if (loadParam) {
+    console.log('🔍 URL loadParam:', loadParam, 'searchParams:', Object.fromEntries(searchParams));
+    if (loadParam && loadParam !== 'undefined') {
+      console.log('📋 Loading strategy by ID:', loadParam);
       loadStrategyById(loadParam, onLoadStrategy);
+    } else if (loadParam === 'undefined') {
+      console.warn('⚠️ Skipping load because loadParam is "undefined" string');
     }
   }, [searchParams]);
 
   const onLoadStrategy = useCallback(async (strategy) => {
-    console.log('Loading strategy:', strategy);
+    console.log('📥 onLoadStrategy called with:', strategy);
     try {
       let fullStrategy = strategy;
-      if (!strategy.json_tree) {
+      
+      // If we don't have the full strategy data, fetch it
+      if (!strategy.json_tree && strategy.id) {
+        console.log('📡 Fetching full strategy data for ID:', strategy.id);
         fullStrategy = await apiService.getStrategy(strategy.id);
+        console.log('📦 Full strategy fetched:', fullStrategy);
+      }
+      
+      // Validate we have a strategy with required fields
+      if (!fullStrategy || !fullStrategy.id) {
+        console.error('❌ Invalid strategy data received:', fullStrategy);
+        toast.error('Invalid strategy data');
+        return null;
       }
       
       const strategyData = {
         nodes: fullStrategy.json_tree?.nodes || [],
         edges: fullStrategy.json_tree?.edges || [],
       };
+      
+      console.log('📊 Extracted strategy data:', {
+        nodeCount: strategyData.nodes.length,
+        edgeCount: strategyData.edges.length,
+        strategyName: fullStrategy.name
+      });
       
       setCurrentStrategyId(fullStrategy.id);
       setCurrentStrategyMeta({
