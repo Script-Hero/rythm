@@ -9,6 +9,7 @@ import time
 from contextlib import asynccontextmanager
 from typing import List, Dict, Any, Optional
 from uuid import UUID
+from fastapi import Body
 
 import structlog
 import uvicorn
@@ -21,6 +22,9 @@ sys.path.append(os.path.join(os.path.dirname(__file__), '../../..'))
 from shared.models.strategy_models import (
     StrategyCreate, StrategyUpdate, StrategyResponse, 
     StrategyCompilationResult, StrategySearchResult, StrategyStats
+)
+from shared.response_models import (
+    StandardResponse, ListResponse, CreationResponse
 )
 from shared.models.user_models import UserResponse
 from shared.strategy_engine import StrategyCompiler, get_available_nodes
@@ -74,11 +78,11 @@ app = FastAPI(
 
 
 # Strategy CRUD Operations
-@app.post("/", response_model=StrategyResponse)
+@app.post("/")
 async def create_strategy(
     strategy: StrategyCreate,
     current_user: UserResponse = Depends(get_current_user)
-) -> StrategyResponse:
+):
     """Create a new strategy."""
     try:
         # Validate and compile strategy
@@ -120,7 +124,10 @@ async def create_strategy(
             name=strategy.name
         )
         
-        return db_strategy
+        return CreationResponse.strategy_created(
+            strategy_id=str(db_strategy.id),
+            message="Strategy created successfully"
+        )
         
     except HTTPException:
         raise
@@ -132,14 +139,14 @@ async def create_strategy(
         )
 
 
-@app.get("/", response_model=List[StrategyResponse])
+@app.get("/")
 async def list_strategies(
     category: Optional[str] = None,
     include_templates: bool = True,
     limit: int = 50,
     offset: int = 0,
     current_user: UserResponse = Depends(get_current_user)
-) -> List[StrategyResponse]:
+):
     """List user's strategies."""
     try:
         strategies = await DatabaseService.list_user_strategies(
@@ -150,7 +157,10 @@ async def list_strategies(
             offset=offset
         )
         
-        return strategies
+        return ListResponse.strategies_response(
+            strategies=strategies,
+            message="Strategies retrieved successfully"
+        )
         
     except Exception as e:
         logger.error("Failed to list strategies", error=str(e))
@@ -160,11 +170,101 @@ async def list_strategies(
         )
 
 
-@app.get("/{strategy_id}", response_model=StrategyResponse)
+# Node Information
+@app.get("/nodes")
+async def get_available_node_types():
+    """Get all available node types for strategy building."""
+    try:
+        nodes = get_available_nodes()
+        node_data = {
+            "nodes": nodes,
+            "categories": {
+                "data": [n for n, info in nodes.items() if info["category"] == "data"],
+                "indicators": [n for n, info in nodes.items() if info["category"] == "indicators"],
+                "logic": [n for n, info in nodes.items() if info["category"] == "logic"],
+                "actions": [n for n, info in nodes.items() if info["category"] == "actions"],
+                "other": [n for n, info in nodes.items() if info["category"] == "other"]
+            },
+            "total_count": len(nodes)
+        }
+        
+        return StandardResponse.success_response(
+            data=node_data,
+            message="Available node types retrieved successfully"
+        )
+        
+    except Exception as e:
+        logger.error("Failed to get node types", error=str(e))
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to retrieve node types"
+        )
+
+
+# Strategy Search and Statistics
+@app.get("/search")
+async def search_strategies(
+    query: str,
+    category: Optional[str] = None,
+    limit: int = 20,
+    offset: int = 0,
+    current_user: UserResponse = Depends(get_current_user)
+):
+    """Search strategies by name or description."""
+    try:
+        strategies, total = await DatabaseService.search_strategies(
+            user_id=current_user.id,
+            query=query,
+            category=category,
+            limit=limit,
+            offset=offset
+        )
+        
+        search_result = StrategySearchResult(
+            strategies=strategies,
+            total=total,
+            page=offset // limit + 1,
+            per_page=limit
+        )
+        
+        return ListResponse.strategies_response(
+            strategies=strategies,
+            message="Search completed successfully"
+        )
+        
+    except Exception as e:
+        logger.error("Strategy search failed", error=str(e))
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Search failed"
+        )
+
+
+@app.get("/stats")
+async def get_strategy_stats(
+    current_user: UserResponse = Depends(get_current_user)
+):
+    """Get strategy statistics for the user."""
+    try:
+        stats = await DatabaseService.get_user_strategy_stats(current_user.id)
+        return StandardResponse.success_response(
+            data=stats,
+            message="Strategy statistics retrieved successfully"
+        )
+        
+    except Exception as e:
+        logger.error("Failed to get strategy stats", error=str(e))
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to get statistics"
+        )
+
+
+@app.get("/{strategy_id}")
 async def get_strategy(
     strategy_id: UUID,
     current_user: UserResponse = Depends(get_current_user)
-) -> StrategyResponse:
+):
     """Get a specific strategy."""
     try:
         strategy = await DatabaseService.get_strategy_by_id(strategy_id, current_user.id)
@@ -175,7 +275,10 @@ async def get_strategy(
                 detail="Strategy not found"
             )
         
-        return strategy
+        return StandardResponse.success_response(
+            data=strategy,
+            message="Strategy retrieved successfully"
+        )
         
     except HTTPException:
         raise
@@ -187,12 +290,12 @@ async def get_strategy(
         )
 
 
-@app.put("/{strategy_id}", response_model=StrategyResponse)
+@app.put("/{strategy_id}")
 async def update_strategy(
     strategy_id: UUID,
     strategy_update: StrategyUpdate,
     current_user: UserResponse = Depends(get_current_user)
-) -> StrategyResponse:
+):
     """Update an existing strategy."""
     try:
         # Get existing strategy
@@ -235,7 +338,10 @@ async def update_strategy(
         
         logger.info("Strategy updated", strategy_id=str(strategy_id))
         
-        return updated_strategy
+        return StandardResponse.success_response(
+            data=updated_strategy,
+            message="Strategy updated successfully"
+        )
         
     except HTTPException:
         raise
@@ -267,7 +373,9 @@ async def delete_strategy(
         
         logger.info("Strategy deleted", strategy_id=str(strategy_id))
         
-        return {"success": True, "message": "Strategy deleted successfully"}
+        return StandardResponse.success_response(
+            message="Strategy deleted successfully"
+        )
         
     except HTTPException:
         raise
@@ -280,11 +388,11 @@ async def delete_strategy(
 
 
 # Strategy Compilation
-@app.post("/{strategy_id}/compile", response_model=StrategyCompilationResult)
+@app.post("/{strategy_id}/compile")
 async def compile_strategy(
     strategy_id: UUID,
     current_user: UserResponse = Depends(get_current_user)
-) -> StrategyCompilationResult:
+):
     """Compile and validate a strategy."""
     try:
         # Get strategy
@@ -309,10 +417,15 @@ async def compile_strategy(
                 result.strategy_instance
             )
         
-        return StrategyCompilationResult(
+        compilation_result = StrategyCompilationResult(
             success=result.success,
             report=result.to_dict(),
             error="; ".join(result.errors) if result.errors else None
+        )
+        
+        return StandardResponse.success_response(
+            data=compilation_result,
+            message="Strategy compilation completed"
         )
         
     except HTTPException:
@@ -325,11 +438,12 @@ async def compile_strategy(
         )
 
 
-@app.post("/{strategy_id}/duplicate", response_model=StrategyResponse)
+@app.post("/{strategy_id}/duplicate")
 async def duplicate_strategy(
     strategy_id: UUID,
+    duplicate_data: Optional[Dict[str, str]] = Body(None),
     current_user: UserResponse = Depends(get_current_user)
-) -> StrategyResponse:
+):
     """Duplicate an existing strategy."""
     try:
         # Get original strategy
@@ -340,8 +454,11 @@ async def duplicate_strategy(
                 detail="Strategy not found"
             )
         
-        # Create duplicate with new name
-        duplicate_name = f"{original.name} (Copy)"
+        # Create duplicate with new name (allow custom name if provided)
+        if duplicate_data and duplicate_data.get("name"):
+            duplicate_name = duplicate_data["name"]
+        else:
+            duplicate_name = f"{original.name} (Copy)"
         
         duplicated = await DatabaseService.create_strategy(
             user_id=current_user.id,
@@ -356,7 +473,10 @@ async def duplicate_strategy(
         
         logger.info("Strategy duplicated", original_id=str(strategy_id), new_id=str(duplicated.id))
         
-        return duplicated
+        return StandardResponse.success_response(
+            data=duplicated,
+            message="Strategy duplicated successfully"
+        )
         
     except HTTPException:
         raise
@@ -368,64 +488,18 @@ async def duplicate_strategy(
         )
 
 
-# Strategy Search and Statistics
-@app.get("/search", response_model=StrategySearchResult)
-async def search_strategies(
-    query: str,
-    category: Optional[str] = None,
-    limit: int = 20,
-    offset: int = 0,
-    current_user: UserResponse = Depends(get_current_user)
-) -> StrategySearchResult:
-    """Search strategies by name or description."""
-    try:
-        strategies, total = await DatabaseService.search_strategies(
-            user_id=current_user.id,
-            query=query,
-            category=category,
-            limit=limit,
-            offset=offset
-        )
-        
-        return StrategySearchResult(
-            strategies=strategies,
-            total=total,
-            page=offset // limit + 1,
-            per_page=limit
-        )
-        
-    except Exception as e:
-        logger.error("Strategy search failed", error=str(e))
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Search failed"
-        )
-
-
-@app.get("/stats")
-async def get_strategy_stats(
-    current_user: UserResponse = Depends(get_current_user)
-):
-    """Get strategy statistics for the user."""
-    try:
-        stats = await DatabaseService.get_user_strategy_stats(current_user.id)
-        return stats
-        
-    except Exception as e:
-        logger.error("Failed to get strategy stats", error=str(e))
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to get statistics"
-        )
 
 
 # Template Management
-@app.get("/templates", response_model=List[StrategyResponse])
-async def list_templates() -> List[StrategyResponse]:
+@app.get("/templates")
+async def list_templates():
     """Get available strategy templates."""
     try:
         templates = await StrategyTemplateService.get_all_templates()
-        return templates
+        return ListResponse.strategies_response(
+            strategies=templates,
+            message="Templates retrieved successfully"
+        )
         
     except Exception as e:
         logger.error("Failed to get templates", error=str(e))
@@ -435,12 +509,12 @@ async def list_templates() -> List[StrategyResponse]:
         )
 
 
-@app.post("/templates/{template_name}/create", response_model=StrategyResponse)
+@app.post("/templates/{template_name}/create")
 async def create_from_template(
     template_name: str,
     strategy_name: str,
     current_user: UserResponse = Depends(get_current_user)
-) -> StrategyResponse:
+):
     """Create a strategy from a template."""
     try:
         template = await StrategyTemplateService.get_template(template_name)
@@ -464,7 +538,10 @@ async def create_from_template(
         
         logger.info("Strategy created from template", template=template_name, strategy_id=str(created_strategy.id))
         
-        return created_strategy
+        return CreationResponse.strategy_created(
+            strategy_id=str(created_strategy.id),
+            message="Strategy created from template successfully"
+        )
         
     except HTTPException:
         raise
@@ -476,31 +553,6 @@ async def create_from_template(
         )
 
 
-# Node Information
-@app.get("/nodes", response_model=Dict[str, Any])
-async def get_available_node_types() -> Dict[str, Any]:
-    """Get all available node types for strategy building."""
-    try:
-        nodes = get_available_nodes()
-        return {
-            "success": True,
-            "nodes": nodes,
-            "categories": {
-                "data": [n for n, info in nodes.items() if info["category"] == "data"],
-                "indicators": [n for n, info in nodes.items() if info["category"] == "indicators"],
-                "logic": [n for n, info in nodes.items() if info["category"] == "logic"],
-                "actions": [n for n, info in nodes.items() if info["category"] == "actions"],
-                "other": [n for n, info in nodes.items() if info["category"] == "other"]
-            },
-            "total_count": len(nodes)
-        }
-        
-    except Exception as e:
-        logger.error("Failed to get node types", error=str(e))
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to retrieve node types"
-        )
 
 
 # Health and monitoring

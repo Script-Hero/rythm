@@ -109,6 +109,36 @@ async def list_strategies(
     return await proxy_to_strategy_service("GET", "/", current_user, params=params, auth_header=auth_header)
 
 
+@router.get("/nodes")
+async def get_available_nodes(
+    request: Request,
+    current_user = Depends(get_current_user)
+):
+    """Get available node types for strategy building."""
+    auth_header = request.headers.get("authorization")
+    return await proxy_to_strategy_service("GET", "/nodes", current_user, auth_header=auth_header)
+
+
+@router.get("/search")
+async def search_strategies(
+    request: Request,
+    current_user = Depends(get_current_user)
+):
+    """Search strategies."""
+    params = dict(request.query_params)
+    return await proxy_to_strategy_service("GET", "/search", current_user, params=params)
+
+
+@router.get("/stats")
+async def get_strategy_stats(
+    request: Request,
+    current_user = Depends(get_current_user)
+):
+    """Get strategy statistics."""
+    auth_header = request.headers.get("authorization")
+    return await proxy_to_strategy_service("GET", "/stats", current_user, auth_header=auth_header)
+
+
 @router.get("/{strategy_id}")
 async def get_strategy(
     strategy_id: str,
@@ -151,21 +181,3 @@ async def duplicate_strategy(
     return await proxy_to_strategy_service("POST", f"/{strategy_id}/duplicate", current_user, body)
 
 
-@router.get("/search")
-async def search_strategies(
-    request: Request,
-    current_user = Depends(get_current_user)
-):
-    """Search strategies."""
-    params = dict(request.query_params)
-    return await proxy_to_strategy_service("GET", "/search", current_user, params=params)
-
-
-@router.get("/stats")
-async def get_strategy_stats(
-    request: Request,
-    current_user = Depends(get_current_user)
-):
-    """Get strategy statistics."""
-    auth_header = request.headers.get("authorization")
-    return await proxy_to_strategy_service("GET", "/stats", current_user, auth_header=auth_header)

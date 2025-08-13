@@ -24,6 +24,9 @@ from shared.models.forward_test_models import (
     SessionStatus, TradeResponse, PortfolioSummary, SessionMetrics,
     SessionChartData
 )
+from shared.response_models import (
+    StandardResponse, ListResponse, SessionDetailResponse, CreationResponse
+)
 
 from .config import settings
 from .services import DatabaseService, MarketDataService, StrategyService, TradingEngine
@@ -47,6 +50,43 @@ logger = structlog.get_logger()
 
 # Global session manager
 session_manager = SessionStateManager()
+
+
+# Helper functions for data retrieval
+async def get_portfolio_data(session_id: UUID) -> dict:
+    """Get portfolio data for session detail response."""
+    try:
+        portfolio = PortfolioSummary(
+            session_id=session_id,
+            cash_balance=100000,
+            total_value=100000,
+            total_pnl=0,
+            total_pnl_percent=0.0,
+            positions=[],
+            position_count=0,
+            updated_at=time.time()
+        )
+        return portfolio.dict()
+    except Exception:
+        return {}
+
+
+async def get_metrics_data(session_id: UUID) -> dict:
+    """Get metrics data for session detail response."""
+    try:
+        metrics = await session_manager.get_session_metrics(session_id)
+        return metrics or {}
+    except Exception:
+        return {}
+
+
+async def get_trades_data(session_id: UUID) -> list:
+    """Get trades data for session detail response."""
+    try:
+        # TODO: Implement actual trade retrieval
+        return []
+    except Exception:
+        return []
 
 
 @asynccontextmanager
@@ -84,11 +124,11 @@ app = FastAPI(
 
 
 # Session Management Endpoints
-@app.post("/", response_model=ForwardTestSessionResponse)
+@app.post("/")
 async def create_session(
     session_data: ForwardTestSessionCreate,
     current_user: User = Depends(get_current_user)
-) -> ForwardTestSessionResponse:
+):
     """Create a new forward testing session with enhanced validation."""
     try:
         # Validate session data
@@ -131,7 +171,10 @@ async def create_session(
             symbol=session_data.symbol
         )
         
-        return session
+        return CreationResponse.session_created(
+            session_id=str(session.id),
+            message="Forward test session created successfully"
+        )
         
     except HTTPException:
         raise
@@ -143,18 +186,19 @@ async def create_session(
         )
 
 
-@app.get("/", response_model=List[ForwardTestSessionResponse])
+@app.get("/")
 async def list_sessions(
     status_filter: Optional[SessionStatus] = None,
     symbol: Optional[str] = None,
     limit: int = 20,
     offset: int = 0,
     current_user: User = Depends(get_current_user)
-) -> List[ForwardTestSessionResponse]:
+):
     """List user's forward testing sessions."""
     try:
         # TODO: Implement session listing with filters
-        return []
+        sessions = []
+        return ListResponse.sessions_response(sessions, "Sessions retrieved successfully")
         
     except Exception as e:
         logger.error("Failed to list sessions", error=str(e))
@@ -164,11 +208,11 @@ async def list_sessions(
         )
 
 
-@app.get("/{session_id}", response_model=ForwardTestSessionResponse)
+@app.get("/{session_id}")
 async def get_session(
     session_id: UUID,
     current_user: User = Depends(get_current_user)
-) -> ForwardTestSessionResponse:
+):
     """Get a specific forward testing session."""
     try:
         session = await DatabaseService.get_session(session_id, UUID(current_user.id))
@@ -179,7 +223,17 @@ async def get_session(
                 detail="Session not found"
             )
         
-        return session
+        # Get additional data for session detail response
+        portfolio = await get_portfolio_data(session_id)
+        metrics = await get_metrics_data(session_id)
+        trades = await get_trades_data(session_id)
+        
+        return SessionDetailResponse.create(
+            session=session,
+            portfolio=portfolio,
+            metrics=metrics,
+            trades=trades
+        )
         
     except HTTPException:
         raise
@@ -191,12 +245,12 @@ async def get_session(
         )
 
 
-@app.patch("/{session_id}", response_model=ForwardTestSessionResponse)
-async def update_session(
+@app.put("/{session_id}/status")
+async def update_session_status(
     session_id: UUID,
     session_update: ForwardTestSessionUpdate,
     current_user: User = Depends(get_current_user)
-) -> ForwardTestSessionResponse:
+):
     """Update a forward testing session."""
     try:
         # Get existing session
@@ -220,7 +274,10 @@ async def update_session(
         
         # TODO: Handle other updates (name, description, risk management)
         
-        return session
+        return StandardResponse.success_response(
+            data=session,
+            message="Session status updated successfully"
+        )
         
     except HTTPException:
         raise
@@ -284,7 +341,9 @@ async def start_session(
         
         logger.info("Session started with strategy execution", session_id=str(session_id))
         
-        return {"success": True, "message": "Session started successfully"}
+        return StandardResponse.success_response(
+            message="Session started successfully"
+        )
         
     except HTTPException:
         raise
@@ -321,7 +380,9 @@ async def stop_session(
         
         logger.info("Session stopped", session_id=str(session_id))
         
-        return {"success": True, "message": "Session stopped"}
+        return StandardResponse.success_response(
+            message="Session stopped successfully"
+        )
         
     except HTTPException:
         raise
@@ -343,10 +404,9 @@ async def delete_session(
         # TODO: Implement session deletion
         logger.info("Session deletion requested (PLACEHOLDER)", session_id=str(session_id))
         
-        return {
-            "success": True, 
-            "message": "Session deletion not yet implemented - PLACEHOLDER response"
-        }
+        return StandardResponse.success_response(
+            message="Session deletion not yet implemented - PLACEHOLDER response"
+        )
         
     except Exception as e:
         logger.error("Failed to delete session", session_id=str(session_id), error=str(e))
@@ -395,15 +455,15 @@ async def restore_session_data(
 
 
 # Portfolio and Performance Endpoints
-@app.get("/{session_id}/portfolio", response_model=PortfolioSummary)
+@app.get("/{session_id}/portfolio")
 async def get_portfolio(
     session_id: UUID,
     current_user: User = Depends(get_current_user)
-) -> PortfolioSummary:
+):
     """Get current portfolio summary for session."""
     try:
         # TODO: Implement portfolio calculation
-        return PortfolioSummary(
+        portfolio = PortfolioSummary(
             session_id=session_id,
             cash_balance=100000,
             total_value=100000,
@@ -412,6 +472,10 @@ async def get_portfolio(
             positions=[],
             position_count=0,
             updated_at=time.time()
+        )
+        return StandardResponse.success_response(
+            data=portfolio,
+            message="Portfolio retrieved successfully"
         )
         
     except Exception as e:
@@ -422,11 +486,11 @@ async def get_portfolio(
         )
 
 
-@app.get("/{session_id}/metrics", response_model=SessionMetrics)
+@app.get("/{session_id}/metrics")
 async def get_session_metrics(
     session_id: UUID,
     current_user: User = Depends(get_current_user)
-) -> SessionMetrics:
+):
     """Get performance metrics for session."""
     try:
         # Get real-time metrics from session manager
@@ -439,7 +503,7 @@ async def get_session_metrics(
             )
         
         # Convert to SessionMetrics model
-        return SessionMetrics(
+        session_metrics = SessionMetrics(
             session_id=session_id,
             total_trades=metrics.get('total_trades', 0),
             winning_trades=metrics.get('winning_trades', 0),
@@ -455,6 +519,10 @@ async def get_session_metrics(
             consecutive_wins=0,  # TODO: Calculate
             consecutive_losses=0,  # TODO: Calculate
             updated_at=time.time()
+        )
+        return StandardResponse.success_response(
+            data=session_metrics,
+            message="Metrics retrieved successfully"
         )
         
     except HTTPException:
@@ -499,17 +567,18 @@ async def get_session_status(
         )
 
 
-@app.get("/{session_id}/trades", response_model=List[TradeResponse])
+@app.get("/{session_id}/trades")
 async def get_session_trades(
     session_id: UUID,
     limit: int = 50,
     offset: int = 0,
     current_user: User = Depends(get_current_user)
-) -> List[TradeResponse]:
+):
     """Get trades for session."""
     try:
         # TODO: Implement trade history retrieval
-        return []
+        trades = []
+        return ListResponse.trades_response(trades, "Trades retrieved successfully")
         
     except Exception as e:
         logger.error("Failed to get trades", session_id=str(session_id), error=str(e))
@@ -519,18 +588,22 @@ async def get_session_trades(
         )
 
 
-@app.get("/{session_id}/chart", response_model=SessionChartData)
+@app.get("/{session_id}/chart")
 async def get_chart_data(
     session_id: UUID,
     current_user: User = Depends(get_current_user)
-) -> SessionChartData:
+):
     """Get chart data for session."""
     try:
         # TODO: Implement chart data retrieval
-        return SessionChartData(
+        chart_data = SessionChartData(
             session_id=session_id,
             data_points=[],
             updated_at=time.time()
+        )
+        return StandardResponse.success_response(
+            data=chart_data,
+            message="Chart data retrieved successfully"
         )
         
     except Exception as e:
