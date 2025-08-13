@@ -36,7 +36,7 @@ const FlowControls = ({
   const handleTestStrategy = async () => {
     try {
       // Check if we have nodes to test
-      if (nodes.length === 0) {
+      if (!nodes || nodes.length === 0) {
         toast.error('Please add some nodes to test your strategy');
         return;
       }
@@ -105,7 +105,7 @@ const FlowControls = ({
         </DropdownMenuTrigger>
         <DropdownMenuContent align="start" className="w-80">
           <DropdownMenuLabel>My Strategies</DropdownMenuLabel>
-          {savedStrategies.length > 0 ? (
+          {savedStrategies && savedStrategies.length > 0 ? (
             savedStrategies.map((strategy) => (
               <DropdownMenuItem key={strategy.id} onClick={() => onLoadStrategy(strategy)}>
                 <div className="flex flex-col items-start">
@@ -116,7 +116,9 @@ const FlowControls = ({
             ))
           ) : (
             <DropdownMenuItem disabled>
-              <span className="text-xs text-gray-400">No saved strategies yet</span>
+              <span className="text-xs text-gray-400">
+                {savedStrategies === undefined ? 'Loading strategies...' : 'No saved strategies yet'}
+              </span>
             </DropdownMenuItem>
           )}
         </DropdownMenuContent>
