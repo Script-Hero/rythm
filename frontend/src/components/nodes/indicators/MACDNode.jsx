@@ -1,10 +1,17 @@
-import { useState, memo } from 'react';
+import { useState, useEffect, memo } from 'react';
 import { Handle, Position } from '@xyflow/react';
 
-function MACDNode({ data, id }) {
+function MACDNode({ data, id, updateNodeData }) {
   const [fastPeriod, setFastPeriod] = useState(data.fastPeriod || 12);
   const [slowPeriod, setSlowPeriod] = useState(data.slowPeriod || 26);
   const [signalPeriod, setSignalPeriod] = useState(data.signalPeriod || 9);
+
+  // Sync with loaded data when it changes
+  useEffect(() => {
+    setFastPeriod(data.fastPeriod || 12);
+    setSlowPeriod(data.slowPeriod || 26);
+    setSignalPeriod(data.signalPeriod || 9);
+  }, [data.fastPeriod, data.slowPeriod, data.signalPeriod]);
 
   return (
     <div className="bg-green-100 border-2 border-green-300 rounded-lg p-3 min-w-36">
@@ -16,7 +23,11 @@ function MACDNode({ data, id }) {
           <input
             type="number"
             value={fastPeriod}
-            onChange={(e) => setFastPeriod(parseInt(e.target.value))}
+            onChange={(e) => {
+              const value = parseInt(e.target.value);
+              setFastPeriod(value);
+              updateNodeData && updateNodeData(id, { fastPeriod: value });
+            }}
             className="w-full px-2 py-1 text-xs border rounded"
             min="1"
             max="50"
@@ -28,7 +39,11 @@ function MACDNode({ data, id }) {
           <input
             type="number"
             value={slowPeriod}
-            onChange={(e) => setSlowPeriod(parseInt(e.target.value))}
+            onChange={(e) => {
+              const value = parseInt(e.target.value);
+              setSlowPeriod(value);
+              updateNodeData && updateNodeData(id, { slowPeriod: value });
+            }}
             className="w-full px-2 py-1 text-xs border rounded"
             min="1"
             max="100"
@@ -40,7 +55,11 @@ function MACDNode({ data, id }) {
           <input
             type="number"
             value={signalPeriod}
-            onChange={(e) => setSignalPeriod(parseInt(e.target.value))}
+            onChange={(e) => {
+              const value = parseInt(e.target.value);
+              setSignalPeriod(value);
+              updateNodeData && updateNodeData(id, { signalPeriod: value });
+            }}
             className="w-full px-2 py-1 text-xs border rounded"
             min="1"
             max="50"

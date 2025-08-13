@@ -1,9 +1,14 @@
-import { useState, memo } from 'react';
+import { useState, useEffect, memo } from 'react';
 import { Handle, Position } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 
-function CrossoverNode({ data, id }) {
+function CrossoverNode({ data, id, updateNodeData }) {
   const [crossType, setCrossType] = useState(data.crossType || 'above');
+
+  // Sync with loaded data when it changes
+  useEffect(() => {
+    setCrossType(data.crossType || 'above');
+  }, [data.crossType]);
 
   return (
     <div className="bg-purple-100 border-2 border-purple-300 rounded-lg p-3 min-w-36">
@@ -14,7 +19,11 @@ function CrossoverNode({ data, id }) {
           <label className="text-xs text-gray-600 block">Cross Type</label>
           <select
             value={crossType}
-            onChange={(e) => setCrossType(e.target.value)}
+            onChange={(e) => {
+              const value = e.target.value;
+              setCrossType(value);
+              updateNodeData && updateNodeData(id, { crossType: value });
+            }}
             className="w-full px-2 py-1 text-xs border rounded"
           >
             <option value="above">Cross Above</option>

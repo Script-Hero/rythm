@@ -63,6 +63,8 @@ function InnerPage() {
   // Wrap strategy actions to integrate with flow management
   const onLoadStrategy = async (strategy) => {
     const strategyData = await originalOnLoadStrategy(strategy);
+    console.log("strategy data");
+    console.log(strategyData);
     if (strategyData) {
       loadFlow(strategyData);
     }

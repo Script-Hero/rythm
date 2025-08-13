@@ -2,7 +2,6 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
 import { apiService } from '../../../services/api';
-import { loadSavedStrategies, loadStrategyById } from '../utils/strategyActions';
 import { STRATEGY_TEMPLATES } from '../complex-templates';
 import { BASIC_STRATEGY_TEMPLATES } from '../basic-templates';
 
@@ -22,6 +21,34 @@ export const useStrategyStateManager = () => {
   const [templateDialogOpen, setTemplateDialogOpen] = useState(false);
   
   const [searchParams] = useSearchParams();
+
+
+
+  const loadSavedStrategies = async () => {
+    try {
+      const response = await apiService.listStrategies({ include_templates: false });
+      console.log('Loaded saved strategies:', response.strategies);
+      setSavedStrategies(response.strategies);
+    } catch (error) {
+      console.error('Failed to load saved strategies:', error);
+      toast.error('Failed to load saved strategies');
+    }
+  };
+
+
+  const loadStrategyById = async (strategyId, onLoadStrategy) => {
+    try {
+      const strategy = await apiService.getStrategy(strategyId);
+      if (strategy) {
+        onLoadStrategy(strategy);
+      } else {
+        toast.error('Strategy not found');
+      }
+    } catch (error) {
+      toast.error('Failed to load strategy');
+      console.error('Failed to load strategy:', error);
+    }
+  };
 
   // Load saved strategies and handle URL parameters on mount
   useEffect(() => {

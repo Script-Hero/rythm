@@ -1,12 +1,20 @@
-import { useState, memo } from 'react';
+import { useState, useEffect, memo } from 'react';
 import { Handle, Position } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 
-function SellNode({ data, id }) {
+function SellNode({ data, id, updateNodeData }) {
   const [quantity, setQuantity] = useState(data.quantity || 100);
   const [orderType, setOrderType] = useState(data.orderType || 'market');
   const [sellType, setSellType] = useState(data.sellType || 'fixed');
   const [percentage, setPercentage] = useState(data.percentage || 100);
+
+  // Sync with loaded data when it changes
+  useEffect(() => {
+    setQuantity(data.quantity || 100);
+    setOrderType(data.orderType || 'market');
+    setSellType(data.sellType || 'fixed');
+    setPercentage(data.percentage || 100);
+  }, [data.quantity, data.orderType, data.sellType, data.percentage]);
 
   return (
     <div className="bg-red-100 border-2 border-red-300 rounded-lg p-3 min-w-40">
@@ -17,7 +25,11 @@ function SellNode({ data, id }) {
           <label className="text-xs text-gray-600 block">Sell Type</label>
           <select
             value={sellType}
-            onChange={(e) => setSellType(e.target.value)}
+            onChange={(e) => {
+              const value = e.target.value;
+              setSellType(value);
+              updateNodeData && updateNodeData(id, { sellType: value });
+            }}
             className="w-full px-2 py-1 text-xs border rounded"
           >
             <option value="fixed">Fixed Quantity</option>
@@ -32,7 +44,11 @@ function SellNode({ data, id }) {
             <input
               type="number"
               value={quantity}
-              onChange={(e) => setQuantity(parseInt(e.target.value))}
+              onChange={(e) => {
+                const value = parseInt(e.target.value);
+                setQuantity(value);
+                updateNodeData && updateNodeData(id, { quantity: value });
+              }}
               className="w-full px-2 py-1 text-xs border rounded"
               min="1"
             />
@@ -45,7 +61,11 @@ function SellNode({ data, id }) {
             <input
               type="number"
               value={percentage}
-              onChange={(e) => setPercentage(parseFloat(e.target.value))}
+              onChange={(e) => {
+                const value = parseFloat(e.target.value);
+                setPercentage(value);
+                updateNodeData && updateNodeData(id, { percentage: value });
+              }}
               className="w-full px-2 py-1 text-xs border rounded"
               min="1"
               max="100"
@@ -58,7 +78,11 @@ function SellNode({ data, id }) {
           <label className="text-xs text-gray-600 block">Order Type</label>
           <select
             value={orderType}
-            onChange={(e) => setOrderType(e.target.value)}
+            onChange={(e) => {
+              const value = e.target.value;
+              setOrderType(value);
+              updateNodeData && updateNodeData(id, { orderType: value });
+            }}
             className="w-full px-2 py-1 text-xs border rounded"
           >
             <option value="market">Market</option>
