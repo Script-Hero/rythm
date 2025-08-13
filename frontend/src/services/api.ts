@@ -74,6 +74,7 @@ class ApiService {
       ...options,
     };
 
+
     try {
       const response = await fetch(url, config);
       
@@ -149,15 +150,46 @@ class ApiService {
         this.clearAuthToken();
       }
     }
-    // User needs to login manually - no auto-auth
+    
+    // Auto-authenticate in development mode
+    try {
+      console.log('🔧 Attempting development authentication...');
+      const response = await fetch(`${API_BASE_URL}/api/auth/dev-login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({})
+      });
+      
+      if (response.ok) {
+        const authData = await response.json();
+        this.setAuthToken(authData.access_token);
+        console.log('✅ Development authentication successful');
+      } else {
+        console.log('❌ Development authentication failed', await response.text());
+      }
+    } catch (error) {
+      console.log('❌ Development authentication error:', error);
+    }
   }
 
   // Strategy CRUD operations
   async saveStrategy(data: SaveStrategyRequest): Promise<{ success: boolean; id: string; message: string }> {
-    return this.request('/api/strategies/', {
+    const { nodes, edges, ...strategyData } = data;
+    const requestBody = {
+      ...strategyData,
+      json_tree: { nodes, edges }
+    };
+    
+    const response = await this.request<{ success: boolean; data: { id: string }; message: string }>('/api/strategies/', {
       method: 'POST',
-      body: JSON.stringify(data),
+      body: JSON.stringify(requestBody),
     });
+    
+    return {
+      success: response.success,
+      id: response.data?.id || '',
+      message: response.message
+    };
   }
 
   async getStrategy(id: string): Promise<Strategy> {
@@ -181,10 +213,22 @@ class ApiService {
   }
 
   async updateStrategy(id: string, data: SaveStrategyRequest): Promise<{ success: boolean; id: string; message: string }> {
-    return this.request(`/api/strategies/${id}`, {
+    const { nodes, edges, ...strategyData } = data;
+    const requestBody = {
+      ...strategyData,
+      json_tree: { nodes, edges }
+    };
+    
+    const response = await this.request<{ success: boolean; data: any; message: string }>(`/api/strategies/${id}`, {
       method: 'PUT',
-      body: JSON.stringify(data),
+      body: JSON.stringify(requestBody),
     });
+    
+    return {
+      success: response.success,
+      id: id, // Use the passed ID for updates
+      message: response.message
+    };
   }
 
   async deleteStrategy(id: string): Promise<{ success: boolean; message: string }> {

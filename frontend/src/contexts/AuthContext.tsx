@@ -42,6 +42,9 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
 
   const checkAuth = async () => {
     try {
+      // Initialize auth (includes dev login in development)
+      await apiService.initializeAuth();
+      
       if (apiService.isAuthenticated()) {
         const currentUser = await apiService.getCurrentUser();
         setUser(currentUser);
