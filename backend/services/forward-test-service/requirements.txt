@@ -1,0 +1,30 @@
+# FastAPI and server
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+
+# Database and caching
+asyncpg==0.29.0
+redis[hiredis]==5.0.1
+
+# Data processing
+pandas==2.1.4
+numpy==1.24.4
+
+# Async and HTTP
+httpx==0.25.2
+aiofiles==23.2.1
+
+# Logging and monitoring
+structlog==23.2.0
+prometheus-client==0.19.0
+
+# Message broker
+kafka-python==2.0.2
+aiokafka==0.10.0
+
+# Utilities
+python-multipart==0.0.6
+pydantic[email]==2.5.0
+pydantic-settings==2.1.0
+python-jose[cryptography]==3.3.0
+PyJWT==2.8.0

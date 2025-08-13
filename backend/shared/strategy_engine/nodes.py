@@ -1,0 +1,750 @@
+"""
+Base node system for strategy compilation.
+Ported and enhanced from Beta1 architecture.
+"""
+
+import time
+from abc import ABC, abstractmethod
+from collections import deque
+from typing import Any, Dict, List, Optional, Set, Tuple
+from decimal import Decimal
+
+# Node registry
+NODE_REGISTRY: Dict[str, type] = {}
+
+
+def register_node(node_type: str):
+    """Decorator to register node types."""
+    def decorator(cls):
+        NODE_REGISTRY[node_type] = cls
+        cls.node_type = node_type
+        return cls
+    return decorator
+
+
+class Node(ABC):
+    """
+    Base class for all strategy nodes.
+    Enhanced from Beta1 with better typing and async support.
+    """
+    
+    inputs: Tuple[str, ...] = ()
+    outputs: Tuple[str, ...] = ()
+    
+    def __init__(self, node_id: str, data: Dict[str, Any], position: Dict[str, float]):
+        self.id = node_id
+        self.data = data
+        self.position = position
+        self.state = {}  # Node-specific state
+        self.last_update = 0
+    
+    @abstractmethod
+    def compute(self, **inputs) -> Dict[str, Any]:
+        """Compute node outputs from inputs."""
+        pass
+    
+    def reset_state(self):
+        """Reset node state."""
+        self.state = {}
+        self.last_update = 0
+    
+    def get_state_summary(self) -> Dict[str, Any]:
+        """Get summary of node state for debugging."""
+        return {
+            "id": self.id,
+            "type": self.node_type,
+            "state_keys": list(self.state.keys()),
+            "last_update": self.last_update
+        }
+
+
+# Data Nodes
+@register_node("priceNode")
+class PriceNode(Node):
+    inputs = ()
+    outputs = ("price-out",)
+    
+    def compute(self, **inputs) -> Dict[str, Any]:
+        symbol = self.data.get("symbol", "BACKTEST_DATA")
+        price_type = self.data.get("priceType", "close")
+        
+        # In microservices, this will get data from Market Data Service
+        # For now, return mock data for compilation testing
+        if symbol == "BACKTEST_DATA":
+            return {"price-out": Decimal('100.0')}
+        
+        # This would be replaced with actual market data call
+        return {"price-out": Decimal('100.0')}
+
+
+@register_node("volumeNode") 
+class VolumeNode(Node):
+    inputs = ()
+    outputs = ("volume-out",)
+    
+    def compute(self, **inputs) -> Dict[str, Any]:
+        symbol = self.data.get("symbol", "BACKTEST_DATA")
+        return {"volume-out": Decimal('1000.0')}
+
+
+# Indicator Nodes
+@register_node("smaNode")
+class SMANode(Node):
+    inputs = ("price-in",)
+    outputs = ("sma-out",)
+    
+    def compute(self, price_in=None, **inputs) -> Dict[str, Any]:
+        if price_in is None:
+            return {"sma-out": None}
+        
+        period = int(self.data.get("period", 20))
+        prices = self.state.setdefault("prices", deque(maxlen=period))
+        
+        prices.append(float(price_in))
+        
+        if len(prices) >= period:
+            sma = sum(prices) / len(prices)
+            return {"sma-out": Decimal(str(sma))}
+        
+        return {"sma-out": None}
+
+
+@register_node("emaNode")
+class EMANode(Node):
+    inputs = ("price-in",)
+    outputs = ("ema-out",)
+    
+    def compute(self, price_in=None, **inputs) -> Dict[str, Any]:
+        if price_in is None:
+            return {"ema-out": None}
+        
+        period = int(self.data.get("period", 20))
+        alpha = 2.0 / (period + 1)
+        
+        current_price = float(price_in)
+        prev_ema = self.state.get("prev_ema")
+        
+        if prev_ema is None:
+            ema = current_price
+        else:
+            ema = alpha * current_price + (1 - alpha) * prev_ema
+        
+        self.state["prev_ema"] = ema
+        return {"ema-out": Decimal(str(ema))}
+
+
+@register_node("rsiNode")
+class RSINode(Node):
+    inputs = ("price-in",)
+    outputs = ("rsi-out",)
+    
+    def compute(self, price_in=None, **inputs) -> Dict[str, Any]:
+        if price_in is None:
+            return {"rsi-out": None}
+        
+        period = int(self.data.get("period", 14))
+        prices = self.state.setdefault("prices", deque(maxlen=period + 1))
+        
+        prices.append(float(price_in))
+        
+        if len(prices) < 2:
+            return {"rsi-out": None}
+        
+        # Calculate gains and losses
+        gains = []
+        losses = []
+        
+        for i in range(1, len(prices)):
+            change = prices[i] - prices[i-1]
+            gains.append(max(0, change))
+            losses.append(max(0, -change))
+        
+        if len(gains) >= period:
+            avg_gain = sum(gains[-period:]) / period
+            avg_loss = sum(losses[-period:]) / period
+            
+            if avg_loss == 0:
+                rsi = 100
+            else:
+                rs = avg_gain / avg_loss
+                rsi = 100 - (100 / (1 + rs))
+            
+            return {"rsi-out": Decimal(str(rsi))}
+        
+        return {"rsi-out": None}
+
+
+# Additional Technical Indicators
+@register_node("atrNode")
+class ATRNode(Node):
+    inputs = ("high-in", "low-in", "close-in")
+    outputs = ("atr-out",)
+    
+    def compute(self, high_in=None, low_in=None, close_in=None, **inputs) -> Dict[str, Any]:
+        if any(x is None for x in [high_in, low_in, close_in]):
+            return {"atr-out": None}
+        
+        period = int(self.data.get("period", 14))
+        
+        # Store OHLC data
+        highs = self.state.setdefault("highs", deque(maxlen=period + 1))
+        lows = self.state.setdefault("lows", deque(maxlen=period + 1))
+        closes = self.state.setdefault("closes", deque(maxlen=period + 1))
+        
+        highs.append(float(high_in))
+        lows.append(float(low_in))
+        closes.append(float(close_in))
+        
+        if len(closes) < 2:
+            return {"atr-out": None}
+        
+        # Calculate True Range
+        prev_close = closes[-2]
+        current_high = highs[-1]
+        current_low = lows[-1]
+        
+        tr1 = current_high - current_low
+        tr2 = abs(current_high - prev_close)
+        tr3 = abs(current_low - prev_close)
+        
+        true_range = max(tr1, tr2, tr3)
+        
+        # Store TR values
+        tr_values = self.state.setdefault("tr_values", deque(maxlen=period))
+        tr_values.append(true_range)
+        
+        if len(tr_values) < period:
+            return {"atr-out": None}
+        
+        # Calculate ATR (Simple Moving Average of True Range)
+        atr = sum(tr_values) / len(tr_values)
+        
+        return {"atr-out": Decimal(str(atr))}
+
+
+@register_node("adxNode")
+class ADXNode(Node):
+    inputs = ("high-in", "low-in", "close-in")
+    outputs = ("adx-out", "di-plus-out", "di-minus-out")
+    
+    def compute(self, high_in=None, low_in=None, close_in=None, **inputs) -> Dict[str, Any]:
+        if any(x is None for x in [high_in, low_in, close_in]):
+            return {"adx-out": None, "di-plus-out": None, "di-minus-out": None}
+        
+        period = int(self.data.get("period", 14))
+        
+        # Store OHLC data
+        highs = self.state.setdefault("highs", deque(maxlen=period + 5))
+        lows = self.state.setdefault("lows", deque(maxlen=period + 5))
+        closes = self.state.setdefault("closes", deque(maxlen=period + 5))
+        
+        highs.append(float(high_in))
+        lows.append(float(low_in))
+        closes.append(float(close_in))
+        
+        if len(closes) < 2:
+            return {"adx-out": None, "di-plus-out": None, "di-minus-out": None}
+        
+        # Calculate directional movement
+        high_diff = highs[-1] - highs[-2]
+        low_diff = lows[-2] - lows[-1]
+        
+        plus_dm = high_diff if high_diff > low_diff and high_diff > 0 else 0
+        minus_dm = low_diff if low_diff > high_diff and low_diff > 0 else 0
+        
+        # Calculate True Range (simplified)
+        tr = max(
+            highs[-1] - lows[-1],
+            abs(highs[-1] - closes[-2]),
+            abs(lows[-1] - closes[-2])
+        )
+        
+        # Store DM and TR values
+        plus_dms = self.state.setdefault("plus_dms", deque(maxlen=period))
+        minus_dms = self.state.setdefault("minus_dms", deque(maxlen=period))
+        tr_values = self.state.setdefault("tr_values", deque(maxlen=period))
+        
+        plus_dms.append(plus_dm)
+        minus_dms.append(minus_dm)
+        tr_values.append(tr)
+        
+        if len(tr_values) < period:
+            return {"adx-out": None, "di-plus-out": None, "di-minus-out": None}
+        
+        # Calculate smoothed averages
+        sum_plus_dm = sum(plus_dms)
+        sum_minus_dm = sum(minus_dms)
+        sum_tr = sum(tr_values)
+        
+        if sum_tr == 0:
+            return {"adx-out": None, "di-plus-out": None, "di-minus-out": None}
+        
+        # Calculate DI+ and DI-
+        di_plus = (sum_plus_dm / sum_tr) * 100
+        di_minus = (sum_minus_dm / sum_tr) * 100
+        
+        # Calculate DX
+        if di_plus + di_minus == 0:
+            dx = 0
+        else:
+            dx = (abs(di_plus - di_minus) / (di_plus + di_minus)) * 100
+        
+        # Store DX values for ADX calculation
+        dx_values = self.state.setdefault("dx_values", deque(maxlen=period))
+        dx_values.append(dx)
+        
+        # Calculate ADX
+        if len(dx_values) < period:
+            adx = None
+        else:
+            adx = sum(dx_values) / len(dx_values)
+        
+        return {
+            "adx-out": Decimal(str(adx)) if adx is not None else None,
+            "di-plus-out": Decimal(str(di_plus)),
+            "di-minus-out": Decimal(str(di_minus))
+        }
+
+
+@register_node("stochasticNode")
+class StochasticNode(Node):
+    inputs = ("high-in", "low-in", "close-in")
+    outputs = ("k-out", "d-out")
+    
+    def compute(self, high_in=None, low_in=None, close_in=None, **inputs) -> Dict[str, Any]:
+        if any(x is None for x in [high_in, low_in, close_in]):
+            return {"k-out": None, "d-out": None}
+        
+        k_period = int(self.data.get("kPeriod", 14))
+        d_period = int(self.data.get("dPeriod", 3))
+        
+        # Store OHLC data
+        highs = self.state.setdefault("highs", deque(maxlen=k_period))
+        lows = self.state.setdefault("lows", deque(maxlen=k_period))
+        closes = self.state.setdefault("closes", deque(maxlen=k_period))
+        
+        highs.append(float(high_in))
+        lows.append(float(low_in))
+        closes.append(float(close_in))
+        
+        if len(closes) < k_period:
+            return {"k-out": None, "d-out": None}
+        
+        # Calculate %K
+        highest_high = max(highs)
+        lowest_low = min(lows)
+        current_close = closes[-1]
+        
+        if highest_high == lowest_low:
+            k_value = 50  # Default when no range
+        else:
+            k_value = ((current_close - lowest_low) / (highest_high - lowest_low)) * 100
+        
+        # Store %K values for %D calculation
+        k_values = self.state.setdefault("k_values", deque(maxlen=d_period))
+        k_values.append(k_value)
+        
+        # Calculate %D (SMA of %K)
+        if len(k_values) < d_period:
+            d_value = None
+        else:
+            d_value = sum(k_values) / len(k_values)
+        
+        return {
+            "k-out": Decimal(str(k_value)),
+            "d-out": Decimal(str(d_value)) if d_value is not None else None
+        }
+
+
+# Logic Nodes
+@register_node("compareNode")
+class CompareNode(Node):
+    inputs = ("value1-in", "value2-in")
+    outputs = ("result-out",)
+    
+    def compute(self, value1_in=None, value2_in=None, **inputs) -> Dict[str, Any]:
+        if value1_in is None or value2_in is None:
+            return {"result-out": False}
+        
+        operator = self.data.get("operator", "greater_than")
+        
+        try:
+            val1 = float(value1_in)
+            val2 = float(value2_in)
+            
+            if operator == "greater_than":
+                result = val1 > val2
+            elif operator == "less_than":
+                result = val1 < val2
+            elif operator == "equal":
+                result = abs(val1 - val2) < 1e-8
+            elif operator == "greater_equal":
+                result = val1 >= val2
+            elif operator == "less_equal":
+                result = val1 <= val2
+            else:
+                result = False
+            
+            return {"result-out": result}
+        except (ValueError, TypeError):
+            return {"result-out": False}
+
+
+@register_node("andNode")
+class AndNode(Node):
+    inputs = ("input1-in", "input2-in")
+    outputs = ("result-out",)
+    
+    def compute(self, input1_in=None, input2_in=None, **inputs) -> Dict[str, Any]:
+        result = bool(input1_in) and bool(input2_in)
+        return {"result-out": result}
+
+
+@register_node("orNode")
+class OrNode(Node):
+    inputs = ("input1-in", "input2-in")
+    outputs = ("result-out",)
+    
+    def compute(self, input1_in=None, input2_in=None, **inputs) -> Dict[str, Any]:
+        result = bool(input1_in) or bool(input2_in)
+        return {"result-out": result}
+
+
+@register_node("notNode")
+class NotNode(Node):
+    inputs = ("input-in",)
+    outputs = ("result-out",)
+    
+    def compute(self, input_in=None, **inputs) -> Dict[str, Any]:
+        result = not bool(input_in)
+        return {"result-out": result}
+
+
+# Additional Indicator Nodes
+@register_node("macdNode")
+class MACDNode(Node):
+    inputs = ("price-in",)
+    outputs = ("macd-out", "signal-out", "histogram-out")
+    
+    def compute(self, price_in=None, **inputs) -> Dict[str, Any]:
+        if price_in is None:
+            return {"macd-out": None, "signal-out": None, "histogram-out": None}
+        
+        fast_period = int(self.data.get("fastPeriod", 12))
+        slow_period = int(self.data.get("slowPeriod", 26))
+        signal_period = int(self.data.get("signalPeriod", 9))
+        
+        # Store price history
+        prices = self.state.setdefault("prices", deque(maxlen=slow_period * 3))
+        prices.append(float(price_in))
+        
+        if len(prices) < slow_period:
+            return {"macd-out": None, "signal-out": None, "histogram-out": None}
+        
+        # Calculate EMAs
+        fast_ema = self._calculate_ema(prices, fast_period, self.state.get("fast_ema"))
+        slow_ema = self._calculate_ema(prices, slow_period, self.state.get("slow_ema"))
+        
+        self.state["fast_ema"] = fast_ema
+        self.state["slow_ema"] = slow_ema
+        
+        # MACD line
+        macd = fast_ema - slow_ema
+        
+        # Store MACD history for signal calculation
+        macd_history = self.state.setdefault("macd_history", deque(maxlen=signal_period * 2))
+        macd_history.append(macd)
+        
+        # Signal line (EMA of MACD)
+        if len(macd_history) >= signal_period:
+            signal = self._calculate_ema(macd_history, signal_period, self.state.get("signal_ema"))
+            self.state["signal_ema"] = signal
+            histogram = macd - signal
+        else:
+            signal = None
+            histogram = None
+        
+        return {
+            "macd-out": Decimal(str(macd)),
+            "signal-out": Decimal(str(signal)) if signal else None,
+            "histogram-out": Decimal(str(histogram)) if histogram else None
+        }
+    
+    def _calculate_ema(self, values, period, prev_ema=None):
+        """Calculate EMA with previous value"""
+        if not values:
+            return 0
+        
+        alpha = 2.0 / (period + 1)
+        current = values[-1]
+        
+        if prev_ema is None:
+            # Start with SMA
+            if len(values) >= period:
+                return sum(list(values)[-period:]) / period
+            else:
+                return sum(values) / len(values)
+        
+        return alpha * current + (1 - alpha) * prev_ema
+
+
+@register_node("bollingerBandsNode")
+class BollingerBandsNode(Node):
+    inputs = ("price-in",)
+    outputs = ("middle-out", "upper-out", "lower-out")
+    
+    def compute(self, price_in=None, **inputs) -> Dict[str, Any]:
+        if price_in is None:
+            return {"middle-out": None, "upper-out": None, "lower-out": None}
+        
+        period = int(self.data.get("period", 20))
+        std_dev = float(self.data.get("deviation", 2))
+        
+        prices = self.state.setdefault("prices", deque(maxlen=period))
+        prices.append(float(price_in))
+        
+        if len(prices) < period:
+            return {"middle-out": None, "upper-out": None, "lower-out": None}
+        
+        # Calculate SMA (middle band)
+        middle = sum(prices) / len(prices)
+        
+        # Calculate standard deviation
+        variance = sum((p - middle) ** 2 for p in prices) / len(prices)
+        std = variance ** 0.5
+        
+        # Calculate bands
+        upper = middle + (std_dev * std)
+        lower = middle - (std_dev * std)
+        
+        return {
+            "middle-out": Decimal(str(middle)),
+            "upper-out": Decimal(str(upper)),
+            "lower-out": Decimal(str(lower))
+        }
+
+
+@register_node("crossoverNode")
+class CrossoverNode(Node):
+    inputs = ("fast-in", "slow-in")
+    outputs = ("cross-out",)
+    
+    def compute(self, fast_in=None, slow_in=None, **inputs) -> Dict[str, Any]:
+        if fast_in is None or slow_in is None:
+            return {"cross-out": False}
+        
+        prev_fast = self.state.get("prev_fast")
+        prev_slow = self.state.get("prev_slow")
+        
+        cross = False
+        if prev_fast is not None and prev_slow is not None:
+            cross_type = self.data.get("crossType", "above")
+            
+            if cross_type == "above":
+                # Fast line crosses above slow line
+                cross = prev_fast <= prev_slow and float(fast_in) > float(slow_in)
+            else:  # "below"
+                # Fast line crosses below slow line
+                cross = prev_fast >= prev_slow and float(fast_in) < float(slow_in)
+        
+        # Update state
+        self.state["prev_fast"] = float(fast_in)
+        self.state["prev_slow"] = float(slow_in)
+        
+        return {"cross-out": cross}
+
+
+# Enhanced Action Nodes
+@register_node("buyNode")
+class BuyNode(Node):
+    inputs = ("trigger-in",)
+    outputs = ("signal-out",)
+    
+    def compute(self, trigger_in=None, **inputs) -> Dict[str, Any]:
+        if trigger_in:
+            quantity = self.data.get("quantity", 100)
+            order_type = self.data.get("orderType", "market")
+            return {
+                "signal-out": {
+                    "action": "BUY",
+                    "quantity": quantity,
+                    "order_type": order_type
+                }
+            }
+        return {"signal-out": None}
+
+
+@register_node("sellNode")
+class SellNode(Node):
+    inputs = ("trigger-in",)
+    outputs = ("signal-out",)
+    
+    def compute(self, trigger_in=None, **inputs) -> Dict[str, Any]:
+        if trigger_in:
+            quantity = self.data.get("quantity", 100)
+            order_type = self.data.get("orderType", "market")
+            return {
+                "signal-out": {
+                    "action": "SELL", 
+                    "quantity": quantity,
+                    "order_type": order_type
+                }
+            }
+        return {"signal-out": None}
+
+
+@register_node("holdNode")
+class HoldNode(Node):
+    inputs = ("trigger-in", "condition-in")
+    outputs = ("hold-out",)
+    
+    def compute(self, trigger_in=None, condition_in=None, **inputs) -> Dict[str, Any]:
+        hold_type = self.data.get("holdType", "indefinite")
+        
+        # Start holding if triggered
+        if trigger_in:
+            self.state["active"] = True
+            if hold_type == "duration":
+                duration = self.data.get("duration", 1)
+                # For now, use simple counter - in real implementation would use timestamps
+                self.state["hold_counter"] = 0
+                self.state["hold_duration"] = duration
+        
+        # Check if still holding
+        is_holding = False
+        if self.state.get("active"):
+            if hold_type == "indefinite":
+                is_holding = True
+            elif hold_type == "duration":
+                counter = self.state.get("hold_counter", 0)
+                duration = self.state.get("hold_duration", 1)
+                is_holding = counter < duration
+                self.state["hold_counter"] = counter + 1
+                if counter >= duration:
+                    self.state["active"] = False
+            elif hold_type == "condition":
+                # Hold until condition becomes true
+                is_holding = not bool(condition_in)
+                if condition_in:
+                    self.state["active"] = False
+        
+        return {"hold-out": is_holding}
+
+
+# Risk Management Nodes
+@register_node("stopLossNode")
+class StopLossNode(Node):
+    inputs = ("trigger-in", "price-in")
+    outputs = ("stop-triggered",)
+    
+    def compute(self, trigger_in=None, price_in=None, **inputs) -> Dict[str, Any]:
+        if trigger_in and price_in is not None:
+            # Arm the stop loss
+            self.state["armed"] = True
+            self.state["entry_price"] = float(price_in)
+            self.state["triggered"] = False
+        
+        if not self.state.get("armed") or price_in is None:
+            return {"stop-triggered": False}
+        
+        if self.state.get("triggered"):
+            return {"stop-triggered": True}
+        
+        entry_price = self.state["entry_price"]
+        current_price = float(price_in)
+        stop_type = self.data.get("stopType", "fixed_percent")
+        stop_value = self.data.get("stopValue", 5)
+        
+        triggered = False
+        
+        if stop_type == "fixed_percent":
+            loss_percent = ((entry_price - current_price) / entry_price) * 100
+            triggered = loss_percent >= stop_value
+        elif stop_type == "fixed_amount":
+            loss_amount = entry_price - current_price
+            triggered = loss_amount >= stop_value
+        elif stop_type == "trailing_percent":
+            # Track highest price since entry
+            highest = self.state.get("highest_price", entry_price)
+            if current_price > highest:
+                highest = current_price
+                self.state["highest_price"] = highest
+            
+            trailing_stop = highest * (1 - stop_value / 100)
+            triggered = current_price <= trailing_stop
+        
+        if triggered:
+            self.state["triggered"] = True
+        
+        return {"stop-triggered": triggered}
+
+
+@register_node("takeProfitNode")
+class TakeProfitNode(Node):
+    inputs = ("trigger-in", "price-in")
+    outputs = ("profit-triggered",)
+    
+    def compute(self, trigger_in=None, price_in=None, **inputs) -> Dict[str, Any]:
+        if trigger_in and price_in is not None:
+            # Arm the take profit
+            self.state["armed"] = True
+            self.state["entry_price"] = float(price_in)
+            self.state["triggered"] = False
+        
+        if not self.state.get("armed") or price_in is None:
+            return {"profit-triggered": False}
+        
+        if self.state.get("triggered"):
+            return {"profit-triggered": True}
+        
+        entry_price = self.state["entry_price"]
+        current_price = float(price_in)
+        profit_type = self.data.get("profitType", "fixed_percent")
+        profit_value = self.data.get("profitValue", 10)
+        
+        triggered = False
+        
+        if profit_type == "fixed_percent":
+            profit_percent = ((current_price - entry_price) / entry_price) * 100
+            triggered = profit_percent >= profit_value
+        elif profit_type == "fixed_amount":
+            profit_amount = current_price - entry_price
+            triggered = profit_amount >= profit_value
+        
+        if triggered:
+            self.state["triggered"] = True
+        
+        return {"profit-triggered": triggered}
+
+
+def get_available_nodes() -> Dict[str, Dict[str, Any]]:
+    """Get all available node types with their metadata."""
+    nodes_info = {}
+    
+    for node_type, node_class in NODE_REGISTRY.items():
+        nodes_info[node_type] = {
+            "name": node_type,
+            "class_name": node_class.__name__,
+            "inputs": list(node_class.inputs),
+            "outputs": list(node_class.outputs),
+            "category": _get_node_category(node_type)
+        }
+    
+    return nodes_info
+
+
+def _get_node_category(node_type: str) -> str:
+    """Categorize nodes for UI organization."""
+    if node_type in ["priceNode", "volumeNode", "timeNode"]:
+        return "data"
+    elif node_type in ["smaNode", "emaNode", "rsiNode", "macdNode", "bollingerBandsNode", 
+                       "atrNode", "adxNode", "stochasticNode"]:
+        return "indicators"
+    elif node_type in ["compareNode", "andNode", "orNode", "notNode", "crossoverNode"]:
+        return "logic"
+    elif node_type in ["buyNode", "sellNode", "holdNode"]:
+        return "actions"
+    elif node_type in ["stopLossNode", "takeProfitNode"]:
+        return "risk_management"
+    else:
+        return "other"

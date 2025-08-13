@@ -1,0 +1,15 @@
+/* LiveDashboard.module.css */
+.axis-label {
+  font-size: 0.85rem;
+  fill: #64748b; /* tailwind slate-400 */
+}
+
+.recharts-tooltip-wrapper {
+  border-radius: 0.75rem !important;
+  box-shadow: 0 2px 8px 0 rgba(30, 41, 59, 0.10) !important;
+  font-size: 0.93rem !important;
+  background: white !important;
+  color: #1e293b !important;
+  padding: 0.75rem 1rem !important;
+  border: none !important;
+}
