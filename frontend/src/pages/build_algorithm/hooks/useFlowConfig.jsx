@@ -55,7 +55,10 @@ export const useFlowConfig = (initialConfig = { nodes: [], edges: [] }) => {
   }, []);
 
   const loadFlow = useCallback((config) => {
+    console.log("🚀 loadFlow called with config:", config);
+    console.log("📊 Setting flowConfig to:", { nodeCount: config.nodes?.length, edgeCount: config.edges?.length });
     setFlowConfig(config);
+    console.log("✅ setFlowConfig called");
   }, []);
 
   const addNode = useCallback((newNode) => {

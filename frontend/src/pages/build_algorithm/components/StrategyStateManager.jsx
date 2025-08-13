@@ -50,18 +50,10 @@ export const useStrategyStateManager = () => {
     }
   };
 
-  // Load saved strategies and handle URL parameters on mount
+  // Load saved strategies on mount
   useEffect(() => {
     loadSavedStrategies(setSavedStrategies);
-    const loadParam = searchParams.get('load');
-    console.log('🔍 URL loadParam:', loadParam, 'searchParams:', Object.fromEntries(searchParams));
-    if (loadParam && loadParam !== 'undefined') {
-      console.log('📋 Loading strategy by ID:', loadParam);
-      loadStrategyById(loadParam, onLoadStrategy);
-    } else if (loadParam === 'undefined') {
-      console.warn('⚠️ Skipping load because loadParam is "undefined" string');
-    }
-  }, [searchParams]);
+  }, []);
 
   const onLoadStrategy = useCallback(async (strategy) => {
     console.log('📥 onLoadStrategy called with:', strategy);
@@ -101,6 +93,7 @@ export const useStrategyStateManager = () => {
         category: fullStrategy.category,
         tags: fullStrategy.tags,
       });
+      
       
       toast.success(`Loaded strategy: ${fullStrategy.name}`);
       return strategyData;
