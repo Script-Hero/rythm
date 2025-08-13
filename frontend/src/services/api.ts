@@ -176,7 +176,8 @@ class ApiService {
     
     const query = searchParams.toString();
     const endpoint = `/api/strategies/${query ? `?${query}` : ''}`;
-    return this.request(endpoint);
+    const response = await this.request<{ success: boolean; data: { strategies: Strategy[] }; message: string }>(endpoint);
+    return response.data || { strategies: [] };
   }
 
   async updateStrategy(id: string, data: SaveStrategyRequest): Promise<{ success: boolean; id: string; message: string }> {
