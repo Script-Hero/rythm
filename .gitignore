@@ -1,1 +1,2 @@
-./backend/test_*.py
+backend/test_compilation.py
+backend/test_strategy_integration.py
