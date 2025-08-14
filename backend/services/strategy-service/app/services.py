@@ -96,6 +96,11 @@ class RedisService:
         return await _redis_service.cache_compiled_strategy(strategy_id, strategy_instance, ttl)
     
     @staticmethod
+    async def get_compiled_strategy(strategy_id: str):
+        """Get cached compiled strategy"""
+        return await _redis_service.get_compiled_strategy(strategy_id)
+    
+    @staticmethod
     async def remove_compiled_strategy(strategy_id: str):
         """Remove compiled strategy from cache"""
         return await _redis_service.remove_compiled_strategy(strategy_id)

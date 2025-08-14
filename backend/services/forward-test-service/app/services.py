@@ -5,6 +5,7 @@ Handles database operations, trading logic, and portfolio management.
 
 import asyncio
 import json
+import pickle
 from datetime import datetime, timedelta
 from decimal import Decimal
 from typing import Dict, List, Optional, Any, Tuple
@@ -29,6 +30,7 @@ from shared.models.forward_test_models import (
     TradeResponse, PortfolioSummary, PortfolioPosition,
     SessionMetrics, ChartDataPoint
 )
+from shared.strategy_engine.compiler import CompiledStrategy
 
 logger = structlog.get_logger()
 
@@ -288,6 +290,52 @@ class StrategyService:
                     
         except Exception as e:
             logger.error("Failed to get strategy", strategy_id=strategy_id, error=str(e))
+        
+        return None
+    
+    @classmethod
+    async def get_compiled_strategy_binary(cls, strategy_id: UUID, user_token: str) -> Optional[CompiledStrategy]:
+        """Get compiled strategy binary from Strategy Service Redis cache."""
+        try:
+            logger.info("🔄 Requesting compiled strategy binary from Strategy Service", 
+                       strategy_id=str(strategy_id))
+            
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.get(
+                    f"{settings.STRATEGY_SERVICE_URL}/{strategy_id}/compiled",
+                    headers={"Authorization": f"Bearer {user_token}"}
+                )
+                
+                if response.status_code == 200:
+                    logger.info("✅ Received compiled strategy binary", 
+                               strategy_id=str(strategy_id),
+                               content_length=len(response.content))
+                    
+                    # Deserialize the pickled CompiledStrategy
+                    compiled_strategy = pickle.loads(response.content)
+                    
+                    logger.info("🥒 Successfully unpickled compiled strategy",
+                               strategy_id=str(strategy_id),
+                               strategy_type=type(compiled_strategy).__name__,
+                               node_count=len(compiled_strategy.nodes) if hasattr(compiled_strategy, 'nodes') else 0,
+                               execution_order=compiled_strategy.execution_order if hasattr(compiled_strategy, 'execution_order') else [])
+                    
+                    return compiled_strategy
+                
+                elif response.status_code == 404:
+                    logger.warning("❌ Compiled strategy not found in cache", 
+                                  strategy_id=str(strategy_id))
+                    return None
+                else:
+                    logger.error("❌ Failed to get compiled strategy binary", 
+                                strategy_id=str(strategy_id),
+                                status_code=response.status_code,
+                                response_text=response.text)
+                    
+        except Exception as e:
+            logger.exception("💥 Error getting compiled strategy binary", 
+                           strategy_id=str(strategy_id), 
+                           error=str(e))
         
         return None
 

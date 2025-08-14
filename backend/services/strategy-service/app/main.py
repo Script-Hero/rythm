@@ -13,8 +13,9 @@ from fastapi import Body
 
 import structlog
 import uvicorn
+import pickle
 from fastapi import FastAPI, HTTPException, Depends, status
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 
 # Add shared models to path
 sys.path.append(os.path.join(os.path.dirname(__file__), '../../..'))
@@ -330,6 +331,70 @@ async def get_strategy(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to retrieve strategy"
+        )
+
+
+@app.get("/{strategy_id}/compiled")
+async def get_compiled_strategy_binary(
+    strategy_id: UUID,
+    current_user: UserResponse = Depends(get_current_user)
+):
+    """Get compiled strategy as binary data for execution services."""
+    logger.info("🔄 Retrieving compiled strategy binary", 
+               strategy_id=str(strategy_id),
+               user_id=str(current_user.id))
+    
+    try:
+        # Check if strategy exists and belongs to user
+        strategy = await DatabaseService.get_strategy_by_id(strategy_id, current_user.id)
+        if not strategy:
+            logger.error("❌ Strategy not found for compiled binary request", 
+                        strategy_id=str(strategy_id),
+                        user_id=str(current_user.id))
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Strategy not found"
+            )
+        
+        # Get compiled strategy from Redis cache
+        logger.info("🔍 Retrieving compiled strategy from cache")
+        compiled_strategy = await RedisService.get_compiled_strategy(str(strategy_id))
+        
+        if not compiled_strategy:
+            logger.warning("❌ No compiled strategy found in cache", 
+                          strategy_id=str(strategy_id))
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Compiled strategy not found in cache. Please recompile the strategy."
+            )
+        
+        # Serialize to binary
+        logger.info("🥒 Serializing compiled strategy to binary")
+        binary_data = pickle.dumps(compiled_strategy)
+        
+        logger.info("✅ Compiled strategy binary retrieved successfully", 
+                   strategy_id=str(strategy_id),
+                   binary_size=len(binary_data))
+        
+        return Response(
+            content=binary_data,
+            media_type="application/octet-stream",
+            headers={
+                "Content-Disposition": f"attachment; filename=strategy_{strategy_id}.pkl",
+                "X-Strategy-ID": str(strategy_id),
+                "X-Binary-Size": str(len(binary_data))
+            }
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("💥 Failed to retrieve compiled strategy binary", 
+                        strategy_id=str(strategy_id),
+                        error=str(e))
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to retrieve compiled strategy"
         )
 
 

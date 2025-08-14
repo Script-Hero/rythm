@@ -107,7 +107,8 @@ class SessionStateManager:
     async def create_session(
         self, 
         session_data: ForwardTestSessionResponse,
-        strategy_json: Dict[str, Any]
+        strategy_json: Dict[str, Any],
+        user_token: Optional[str] = None
     ) -> Tuple[bool, Optional[str]]:
         """Create and initialize a new session."""
         session_id = session_data.id
@@ -129,15 +130,51 @@ class SessionStateManager:
                 # Update database status
                 await DatabaseService.update_session_status(session_id, SessionStatus.INITIALIZING)
                 
-                # Compile strategy
-                compilation_result = self.strategy_compiler.compile_strategy(strategy_json)
+                # Get compiled strategy from Strategy Service cache
+                logger.info("🔄 Retrieving compiled strategy from cache", 
+                           strategy_id=str(session_data.strategy_id),
+                           session_id=str(session_id))
                 
-                if not compilation_result.success:
-                    error_msg = f"Strategy compilation failed: {', '.join(compilation_result.errors)}"
-                    await self._handle_session_error(session_id, error_msg)
-                    return False, error_msg
-                
-                runtime_data.compiled_strategy = compilation_result.strategy_instance
+                if user_token:
+                    # Try to get from cache first
+                    compiled_strategy = await StrategyService.get_compiled_strategy_binary(
+                        session_data.strategy_id, user_token
+                    )
+                    
+                    if compiled_strategy:
+                        logger.info("✅ Using cached compiled strategy", 
+                                   strategy_id=str(session_data.strategy_id),
+                                   session_id=str(session_id))
+                        runtime_data.compiled_strategy = compiled_strategy
+                    else:
+                        logger.warning("❌ No cached strategy found, falling back to compilation", 
+                                     strategy_id=str(session_data.strategy_id),
+                                     session_id=str(session_id))
+                        # Fallback to local compilation
+                        compilation_result = self.strategy_compiler.compile_strategy(strategy_json)
+                        
+                        if not compilation_result.success:
+                            error_msg = f"Strategy compilation failed: {', '.join(compilation_result.errors)}"
+                            await self._handle_session_error(session_id, error_msg)
+                            return False, error_msg
+                        
+                        runtime_data.compiled_strategy = compilation_result.strategy_instance
+                        logger.info("✅ Compiled strategy locally as fallback", 
+                                   strategy_id=str(session_data.strategy_id),
+                                   session_id=str(session_id))
+                else:
+                    logger.warning("⚠️ No user token provided, compiling strategy locally", 
+                                 strategy_id=str(session_data.strategy_id),
+                                 session_id=str(session_id))
+                    # Fallback to local compilation when no token
+                    compilation_result = self.strategy_compiler.compile_strategy(strategy_json)
+                    
+                    if not compilation_result.success:
+                        error_msg = f"Strategy compilation failed: {', '.join(compilation_result.errors)}"
+                        await self._handle_session_error(session_id, error_msg)
+                        return False, error_msg
+                    
+                    runtime_data.compiled_strategy = compilation_result.strategy_instance
                 
                 # Subscribe to market data
                 subscribe_success = await MarketDataService.subscribe_to_symbol(session_data.symbol)

@@ -11,7 +11,7 @@ from uuid import UUID
 
 import structlog
 import uvicorn
-from fastapi import FastAPI, HTTPException, Depends, status, BackgroundTasks
+from fastapi import FastAPI, HTTPException, Depends, status, BackgroundTasks, Request
 from fastapi.responses import JSONResponse
 
 # Add shared models to path
@@ -127,6 +127,7 @@ app = FastAPI(
 @app.post("/")
 async def create_session(
     session_data: ForwardTestSessionCreate,
+    request: Request,
     current_user: User = Depends(get_current_user)
 ):
     """Create a new forward testing session with enhanced validation."""
@@ -154,8 +155,14 @@ async def create_session(
             strategy_snapshot=strategy
         )
         
+        # Extract JWT token from Authorization header
+        user_token = None
+        auth_header = request.headers.get("Authorization")
+        if auth_header and auth_header.startswith("Bearer "):
+            user_token = auth_header[7:]  # Remove "Bearer " prefix
+        
         # Create session in session manager
-        success, error_msg = await session_manager.create_session(session, strategy)
+        success, error_msg = await session_manager.create_session(session, strategy, user_token)
         if not success:
             # Clean up database session
             # TODO: Implement cleanup
