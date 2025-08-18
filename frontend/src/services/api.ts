@@ -23,6 +23,78 @@ export interface BacktestRequest {
   interval: string;
 }
 
+export interface BacktestJobResponse {
+  success: boolean;
+  job_id: string;
+  status: 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
+  message: string;
+  progress?: number;
+  results?: BacktestResponse;
+  error_message?: string;
+  estimated_duration?: number;
+  created_at?: number;
+  completed_at?: number;
+}
+
+export interface ForwardTestSession {
+  id: string;
+  name: string;
+  strategy_id: string;
+  symbol: string;
+  status: 'CREATED' | 'RUNNING' | 'PAUSED' | 'STOPPED' | 'ERROR';
+  initial_capital: number;
+  current_capital?: number;
+  created_at: number;
+  started_at?: number;
+  stopped_at?: number;
+  risk_management?: any;
+  description?: string;
+}
+
+export interface PortfolioSummary {
+  session_id: string;
+  cash_balance: number;
+  total_value: number;
+  total_pnl: number;
+  total_pnl_percent: number;
+  positions: Array<{
+    symbol: string;
+    quantity: number;
+    avg_price: number;
+    current_price: number;
+    market_value: number;
+    pnl: number;
+    pnl_percent: number;
+  }>;
+  position_count: number;
+  updated_at: number;
+}
+
+export interface SessionMetrics {
+  session_id: string;
+  total_trades: number;
+  winning_trades: number;
+  losing_trades: number;
+  win_rate: number;
+  total_pnl: number;
+  total_pnl_percent: number;
+  max_drawdown: number;
+  max_drawdown_percent: number;
+  average_trade_pnl: number;
+  largest_win: number;
+  largest_loss: number;
+  consecutive_wins: number;
+  consecutive_losses: number;
+  updated_at: number;
+}
+
+export interface RealtimeUpdate {
+  type: 'portfolio_update' | 'trade_execution' | 'strategy_signal' | 'forward_test_event' | 'realtime_update';
+  session_id?: string;
+  data: any;
+  timestamp: number;
+}
+
 export interface BacktestResponse {
   bar_data: string; // JSON string
   analytics: any;
@@ -44,6 +116,10 @@ const STRATEGY_SERVICE_URL = 'http://localhost:8002';
 const FORWARD_TEST_SERVICE_URL = 'http://localhost:8003';
 const MARKET_DATA_SERVICE_URL = 'http://localhost:8001';
 const BACKTESTING_SERVICE_URL = 'http://localhost:8004';
+const NOTIFICATION_SERVICE_URL = 'http://localhost:8005';
+
+// WebSocket endpoint for real-time notifications
+export const WEBSOCKET_URL = 'ws://localhost:8005/ws';
 
 class ApiService {
   private getAuthToken(): string | null {
@@ -375,12 +451,56 @@ class ApiService {
     return this.request('/api/strategies/stats');
   }
 
-  // Backtesting
+  // Enhanced Backtesting with Job Queue System
   async runBacktest(data: BacktestRequest): Promise<BacktestResponse> {
-    return this.request('/api/backtest/run', {
-      method: 'POST',
-      body: JSON.stringify(data),
+    console.log('📊 Frontend: Submitting backtest job', {
+      strategy_id: data.strategy_id,
+      symbol: data.ticker,
+      dateRange: `${data.fromDate} to ${data.toDate}`,
+      interval: data.interval
     });
+    
+    return this.request('/api/backtesting/run', {
+      method: 'POST',
+      body: JSON.stringify({
+        strategy_id: data.strategy_id,
+        symbol: data.ticker,
+        start_date: data.fromDate,
+        end_date: data.toDate,
+        interval: data.interval
+      }),
+    });
+  }
+
+  async getBacktestResult(jobId: string): Promise<any> {
+    console.log('📈 Frontend: Getting backtest result', jobId);
+    return this.request(`/api/backtesting/${jobId}`);
+  }
+
+  async listBacktestJobs(params?: { 
+    limit?: number;
+    offset?: number;
+    status?: string;
+  }): Promise<any> {
+    const searchParams = new URLSearchParams();
+    if (params?.limit) searchParams.append('limit', params.limit.toString());
+    if (params?.offset) searchParams.append('offset', params.offset.toString());
+    if (params?.status) searchParams.append('status_filter', params.status);
+    
+    const query = searchParams.toString();
+    return this.request(`/api/backtesting/${query ? `?${query}` : ''}`);
+  }
+
+  async cancelBacktest(jobId: string): Promise<any> {
+    console.log('❌ Frontend: Cancelling backtest', jobId);
+    return this.request(`/api/backtesting/${jobId}`, {
+      method: 'DELETE'
+    });
+  }
+
+  async getBacktestMetrics(jobId: string): Promise<any> {
+    console.log('📊 Frontend: Getting backtest metrics', jobId);
+    return this.request(`/api/backtesting/${jobId}/metrics`);
   }
 
   // Forward Testing (Multi-Session Architecture)
@@ -498,6 +618,80 @@ class ApiService {
     }
     
     return result;
+  }
+
+  // Portfolio Management - New real-time endpoints
+  async getPortfolioSummary(sessionId: string): Promise<any> {
+    return this.request(`/api/forward-testing/${sessionId}/portfolio`);
+  }
+
+  async getSessionMetrics(sessionId: string): Promise<any> {
+    return this.request(`/api/forward-testing/${sessionId}/metrics`);
+  }
+
+  async getSessionTrades(sessionId: string, limit: number = 50): Promise<any> {
+    return this.request(`/api/forward-testing/${sessionId}/trades?limit=${limit}`);
+  }
+
+  async getSessionChartData(sessionId: string, limit: number = 1000): Promise<any> {
+    return this.request(`/api/forward-testing/${sessionId}/chart?limit=${limit}`);
+  }
+
+  // Market Data - Enhanced endpoints
+  async getLatestPrices(symbol: string, limit: number = 100): Promise<any> {
+    return this.request(`/api/market-data/symbols/${symbol}/latest?limit=${limit}`);
+  }
+
+  async subscribeToSymbol(symbol: string): Promise<any> {
+    return this.request(`/api/market-data/symbols/${symbol}/subscribe`, {
+      method: 'POST'
+    });
+  }
+
+  async unsubscribeFromSymbol(symbol: string): Promise<any> {
+    return this.request(`/api/market-data/symbols/${symbol}/unsubscribe`, {
+      method: 'DELETE'
+    });
+  }
+
+  async validateSymbolAndDates(data: { symbol: string; start_date: string; end_date: string }): Promise<any> {
+    return this.request('/api/market-data/validate', {
+      method: 'POST',
+      body: JSON.stringify(data)
+    });
+  }
+
+  async getSymbolDateRange(symbol: string): Promise<any> {
+    return this.request(`/api/market-data/symbols/${symbol}/date-range`);
+  }
+
+  // Notification Service Integration
+  async getNotificationConnections(): Promise<any> {
+    return this.request('/api/notifications/connections');
+  }
+
+  async sendUserNotification(userId: string, notification: any): Promise<any> {
+    return this.request(`/api/notifications/notify/user/${userId}`, {
+      method: 'POST',
+      body: JSON.stringify(notification)
+    });
+  }
+
+  async broadcastNotification(notification: any): Promise<any> {
+    return this.request('/api/notifications/notify/broadcast', {
+      method: 'POST',
+      body: JSON.stringify(notification)
+    });
+  }
+
+  // Service Health Checks
+  async getServiceHealth(service?: string): Promise<any> {
+    const endpoint = service ? `/api/${service}/health` : '/api/health';
+    return this.request(endpoint);
+  }
+
+  async getDetailedHealth(): Promise<any> {
+    return this.request('/api/health/detailed');
   }
 
 }

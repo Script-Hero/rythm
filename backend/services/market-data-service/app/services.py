@@ -210,26 +210,44 @@ class KafkaService:
 
 class CoinbaseWebSocketService:
     """
-    Coinbase WebSocket service for real-time price feeds.
-    Feeds data into Redis sliding windows.
+    Enhanced Coinbase WebSocket service for real-time price feeds.
+    Feeds data into Redis sliding windows with robust error handling.
     """
     
     active_subscriptions = set()
     websocket = None
     running = False
+    connection_count = 0
+    last_message_time = None
+    reconnect_attempts = 0
+    max_reconnect_attempts = 10
     
     @classmethod
     async def start_feeds(cls):
-        """Start WebSocket connection and feed processing."""
+        """Start WebSocket connection and feed processing with enhanced error handling."""
         cls.running = True
+        cls.reconnect_attempts = 0
         
-        while cls.running:
+        while cls.running and cls.reconnect_attempts < cls.max_reconnect_attempts:
             try:
                 await cls._connect_and_process()
+                cls.reconnect_attempts = 0  # Reset on successful connection
             except Exception as e:
-                logger.error("WebSocket connection failed", error=str(e))
-                if cls.running:
-                    await asyncio.sleep(settings.RECONNECT_DELAY)
+                cls.reconnect_attempts += 1
+                delay = min(2 ** cls.reconnect_attempts, 60)  # Exponential backoff, max 60 seconds
+                
+                logger.error("WebSocket connection failed", 
+                           error=str(e), 
+                           attempt=cls.reconnect_attempts,
+                           max_attempts=cls.max_reconnect_attempts,
+                           retry_delay=delay)
+                
+                if cls.running and cls.reconnect_attempts < cls.max_reconnect_attempts:
+                    await asyncio.sleep(delay)
+        
+        if cls.reconnect_attempts >= cls.max_reconnect_attempts:
+            logger.error("Max reconnection attempts reached, stopping WebSocket service")
+            cls.running = False
     
     @classmethod
     async def stop_feeds(cls):
@@ -240,22 +258,60 @@ class CoinbaseWebSocketService:
     
     @classmethod
     async def _connect_and_process(cls):
-        """Connect to Coinbase WebSocket and process messages."""
-        async with websockets.connect(settings.COINBASE_WS_URL) as websocket:
-            cls.websocket = websocket
-            logger.info("Connected to Coinbase WebSocket")
+        """Connect to Coinbase WebSocket and process messages with enhanced error handling."""
+        try:
+            # Add connection timeout and headers
+            connect_timeout = 10  # 10 second connection timeout
             
-            # Subscribe to active symbols
-            if cls.active_subscriptions:
-                await cls._send_subscription()
-            
-            # Process incoming messages
-            async for message in websocket:
+            async with websockets.connect(
+                settings.COINBASE_WS_URL,
+                timeout=connect_timeout,
+                ping_interval=20,  # Send ping every 20 seconds
+                ping_timeout=10,   # Wait 10 seconds for pong
+                close_timeout=10   # Wait 10 seconds for close
+            ) as websocket:
+                cls.websocket = websocket
+                cls.connection_count += 1
+                cls.last_message_time = time.time()
+                
+                logger.info("Connected to Coinbase WebSocket", 
+                           connection_count=cls.connection_count,
+                           active_subscriptions=len(cls.active_subscriptions))
+                
+                # Subscribe to active symbols
+                if cls.active_subscriptions:
+                    await cls._send_subscription()
+                
+                # Start heartbeat monitoring
+                heartbeat_task = asyncio.create_task(cls._monitor_heartbeat())
+                
                 try:
-                    data = json.loads(message)
-                    await cls._process_message(data)
-                except Exception as e:
-                    logger.error("Message processing failed", error=str(e))
+                    # Process incoming messages
+                    async for message in websocket:
+                        try:
+                            cls.last_message_time = time.time()
+                            data = json.loads(message)
+                            await cls._process_message(data)
+                        except json.JSONDecodeError as e:
+                            logger.warning("Invalid JSON received", message=message[:100], error=str(e))
+                        except Exception as e:
+                            logger.error("Message processing failed", error=str(e))
+                finally:
+                    heartbeat_task.cancel()
+                    try:
+                        await heartbeat_task
+                    except asyncio.CancelledError:
+                        pass
+                        
+        except websockets.exceptions.ConnectionClosed as e:
+            logger.warning("WebSocket connection closed", code=e.code, reason=e.reason)
+            raise
+        except asyncio.TimeoutError:
+            logger.error("WebSocket connection timeout")
+            raise
+        except Exception as e:
+            logger.error("WebSocket connection error", error=str(e))
+            raise
     
     @classmethod
     async def _send_subscription(cls):
@@ -277,26 +333,81 @@ class CoinbaseWebSocketService:
         logger.info("Sent subscription", symbols=list(cls.active_subscriptions))
     
     @classmethod
+    async def _monitor_heartbeat(cls):
+        """Monitor WebSocket connection health."""
+        try:
+            while cls.running and cls.websocket:
+                current_time = time.time()
+                
+                # Check if we've received messages recently
+                if cls.last_message_time and (current_time - cls.last_message_time) > 60:
+                    logger.warning("No messages received for 60 seconds, connection may be stale")
+                    # Close connection to trigger reconnection
+                    if cls.websocket:
+                        await cls.websocket.close()
+                    break
+                
+                await asyncio.sleep(30)  # Check every 30 seconds
+                
+        except asyncio.CancelledError:
+            logger.debug("Heartbeat monitor cancelled")
+            raise
+        except Exception as e:
+            logger.error("Heartbeat monitor error", error=str(e))
+    
+    @classmethod
     async def _process_message(cls, data: Dict[str, Any]):
-        """Process incoming WebSocket message."""
-        if data.get("type") == "ticker":
-            symbol = data.get("product_id", "").replace("-", "/")
+        """Process incoming WebSocket message with enhanced validation."""
+        try:
+            message_type = data.get("type")
             
-            price_data = {
-                "timestamp": str(int(time.time())),
-                "price": str(data.get("price", 0)),
-                "volume": str(data.get("volume_24h", 0)),
-                "bid": str(data.get("best_bid", 0)),
-                "ask": str(data.get("best_ask", 0)),
-                "high_24h": str(data.get("high_24h", 0)),
-                "low_24h": str(data.get("low_24h", 0))
-            }
-            
-            # Add to Redis sliding window
-            await RedisStreamService.add_price_data(symbol, price_data)
-            
-            # Publish to Kafka
-            await KafkaService.publish_price_update(symbol, price_data)
+            if message_type == "ticker":
+                symbol = data.get("product_id", "").replace("-", "/")
+                
+                # Validate required fields
+                if not symbol or not data.get("price"):
+                    logger.warning("Invalid ticker data", data=data)
+                    return
+                
+                # Validate price is numeric
+                try:
+                    price = float(data.get("price", 0))
+                    if price <= 0:
+                        logger.warning("Invalid price value", symbol=symbol, price=price)
+                        return
+                except (ValueError, TypeError):
+                    logger.warning("Non-numeric price", symbol=symbol, price=data.get("price"))
+                    return
+                
+                price_data = {
+                    "timestamp": str(int(time.time())),
+                    "price": str(price),
+                    "volume": str(data.get("volume_24h", 0)),
+                    "bid": str(data.get("best_bid", 0)),
+                    "ask": str(data.get("best_ask", 0)),
+                    "high_24h": str(data.get("high_24h", 0)),
+                    "low_24h": str(data.get("low_24h", 0))
+                }
+                
+                # Add to Redis sliding window
+                await RedisStreamService.add_price_data(symbol, price_data)
+                
+                # Publish to Kafka
+                await KafkaService.publish_price_update(symbol, price_data)
+                
+                logger.debug("Processed ticker update", symbol=symbol, price=price)
+                
+            elif message_type == "subscriptions":
+                logger.info("Subscription confirmation", channels=data.get("channels", []))
+                
+            elif message_type == "error":
+                logger.error("WebSocket error message", error=data.get("message"), reason=data.get("reason"))
+                
+            else:
+                logger.debug("Unhandled message type", type=message_type, data=data)
+                
+        except Exception as e:
+            logger.error("Message processing error", error=str(e), data=data)
     
     @classmethod
     async def subscribe_symbol(cls, symbol: str) -> bool:

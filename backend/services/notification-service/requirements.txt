@@ -4,3 +4,18 @@ pydantic==2.5.0
 pydantic[email]==2.5.0
 structlog==23.2.0
 python-dotenv==1.0.0
+
+# WebSocket support
+websockets==12.0
+
+# Kafka integration
+aiokafka==0.9.0
+
+# Redis for connection state management
+redis[hiredis]==5.0.1
+
+# JWT authentication
+PyJWT==2.8.0
+
+# HTTP client for service communication
+httpx==0.25.2

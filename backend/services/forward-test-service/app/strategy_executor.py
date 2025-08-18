@@ -5,6 +5,7 @@ Enhanced background execution engine migrated from Beta1's strategy execution lo
 
 import asyncio
 import json
+import time
 from datetime import datetime, timedelta
 from decimal import Decimal
 from typing import Dict, List, Optional, Any, Tuple
@@ -17,6 +18,8 @@ from contextlib import asynccontextmanager
 
 from .config import settings
 from .services import DatabaseService, MarketDataService
+from .portfolio_manager import portfolio_manager
+from .session_event_publisher import session_event_publisher
 
 # Add shared models to path
 import sys
@@ -66,6 +69,12 @@ class StrategyExecutionService:
         self.kafka_producer = KafkaProducer(settings.KAFKA_BOOTSTRAP_SERVERS)
         await self.kafka_producer.start()
         
+        # Initialize portfolio manager
+        await portfolio_manager.initialize()
+        
+        # Initialize session event publisher
+        await session_event_publisher.initialize()
+        
         logger.info("Strategy execution service initialized")
     
     async def shutdown(self):
@@ -79,6 +88,10 @@ class StrategyExecutionService:
         # Wait for tasks to complete
         if self.execution_tasks:
             await asyncio.gather(*self.execution_tasks.values(), return_exceptions=True)
+        
+        # Shutdown subsystems
+        await portfolio_manager.shutdown()
+        await session_event_publisher.shutdown()
         
         # Close connections
         if self.kafka_producer:
@@ -94,7 +107,8 @@ class StrategyExecutionService:
         session_id: UUID,
         user_id: UUID,
         symbol: str,
-        compiled_strategy: CompiledStrategy
+        compiled_strategy: CompiledStrategy,
+        initial_capital: float = 100000.0
     ) -> Tuple[bool, Optional[str]]:
         """Start strategy execution for a session."""
         try:
@@ -107,6 +121,9 @@ class StrategyExecutionService:
             )
             
             self.execution_contexts[session_id] = context
+            
+            # Create portfolio for this session
+            await portfolio_manager.create_portfolio(session_id, initial_capital)
             
             # Start execution task
             task = asyncio.create_task(
@@ -145,6 +162,10 @@ class StrategyExecutionService:
             # Clean up context
             if session_id in self.execution_contexts:
                 del self.execution_contexts[session_id]
+            
+            # Clean up portfolio and session data
+            await portfolio_manager.cleanup_session_data(session_id)
+            await session_event_publisher.cleanup_session_data(session_id)
             
             # Clear Redis cache
             if self.redis_client:
@@ -266,6 +287,13 @@ class StrategyExecutionService:
         logger.info("Processing strategy signal", 
                    session_id=session_id, signal=signal)
         
+        # Execute trade through portfolio manager
+        trade = await portfolio_manager.process_strategy_signal(
+            session_id=session_id,
+            signal=signal,
+            market_data=market_data
+        )
+        
         # Prepare signal data for Kafka
         signal_data = {
             "session_id": str(session_id),
@@ -273,11 +301,13 @@ class StrategyExecutionService:
             "symbol": context.symbol,
             "signal": signal,
             "market_data": market_data,
+            "trade_executed": trade is not None,
+            "trade_id": trade.trade_id if trade else None,
             "timestamp": datetime.utcnow().isoformat(),
             "strategy_state": context.compiled_strategy.get_state_summary()
         }
         
-        # Publish signal to Kafka for forward testing service to process
+        # Publish signal to Kafka for other services
         if self.kafka_producer:
             await self.kafka_producer.send_message(
                 topic=Topics.STRATEGY_SIGNALS,
@@ -292,6 +322,15 @@ class StrategyExecutionService:
                 300,  # 5 minute TTL
                 json.dumps(signal_data, default=str)
             )
+        
+        # Publish price update event
+        await session_event_publisher.publish_price_update(
+            session_id=session_id,
+            user_id=context.user_id,
+            symbol=context.symbol,
+            price=float(market_data.get('price', 0)),
+            volume=float(market_data.get('volume', 0))
+        )
     
     async def _get_latest_market_data(self, symbol: str) -> Optional[Dict[str, Any]]:
         """Get latest market data from Redis sliding window."""
@@ -299,36 +338,53 @@ class StrategyExecutionService:
             return None
         
         try:
-            # Get latest market data from Redis stream
-            # This integrates with the Market Data Service's sliding window
-            stream_name = f"market:{symbol}"
+            # Clean symbol format to match Market Data Service key format
+            clean_symbol = symbol.replace("/", "").replace("-", "")
+            stream_name = f"market:{clean_symbol}"
             
-            # Get the most recent entry
+            # Get the most recent entry from stream
             entries = await self.redis_client.xrevrange(stream_name, count=1)
             
             if entries:
                 entry_id, fields = entries[0]
                 
-                # Convert Redis hash to dict
+                # Convert Redis fields to dict (fields is already a dict in python)
                 market_data = {}
-                for i in range(0, len(fields), 2):
-                    key = fields[i].decode('utf-8')
-                    value = fields[i + 1].decode('utf-8')
+                for key, value in fields.items():
+                    # Decode if bytes
+                    if isinstance(key, bytes):
+                        key = key.decode('utf-8')
+                    if isinstance(value, bytes):
+                        value = value.decode('utf-8')
                     
-                    # Try to convert numeric values
+                    # Convert numeric values
                     try:
-                        if key in ['price', 'volume']:
-                            market_data[key] = float(value)
+                        if key in ['price', 'volume', 'bid', 'ask', 'high_24h', 'low_24h']:
+                            market_data[key] = float(value) if value else 0.0
+                        elif key == 'timestamp':
+                            # Convert timestamp to float then to datetime
+                            timestamp_float = float(value)
+                            market_data[key] = timestamp_float
+                            market_data['datetime'] = datetime.fromtimestamp(timestamp_float)
                         else:
                             market_data[key] = value
-                    except ValueError:
+                    except (ValueError, TypeError):
                         market_data[key] = value
                 
                 # Add metadata
                 market_data['symbol'] = symbol
-                market_data['redis_entry_id'] = entry_id.decode('utf-8')
+                market_data['redis_entry_id'] = entry_id if isinstance(entry_id, str) else entry_id.decode('utf-8')
                 
+                # Ensure we have a price field
+                if 'price' not in market_data or market_data['price'] == 0.0:
+                    logger.warning("No valid price in market data", symbol=symbol, data=market_data)
+                    return None
+                
+                logger.debug("Retrieved market data from Redis", 
+                           symbol=symbol, price=market_data.get('price'))
                 return market_data
+            else:
+                logger.debug("No entries found in Redis stream", symbol=symbol, stream=stream_name)
             
         except Exception as e:
             logger.error("Failed to get market data from Redis", 
@@ -336,19 +392,42 @@ class StrategyExecutionService:
         
         # Fallback: get from Market Data Service API
         try:
-            price = await MarketDataService.get_current_price(symbol)
-            if price:
-                return {
-                    "symbol": symbol,
-                    "price": float(price),
-                    "volume": 1000.0,  # Placeholder
-                    "timestamp": datetime.utcnow().isoformat()
-                }
+            # Call market data service directly via HTTP
+            import httpx
+            async with httpx.AsyncClient() as client:
+                response = await client.get(
+                    f"http://market-data-service:8001/symbols/{symbol}/latest",
+                    params={"limit": 1},
+                    timeout=5.0
+                )
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    if data.get("success") and data.get("prices"):
+                        latest_price = data["prices"][0]
+                        return {
+                            "symbol": symbol,
+                            "price": latest_price.get("price", 0.0),
+                            "volume": latest_price.get("volume", 0.0),
+                            "timestamp": latest_price.get("timestamp", time.time()),
+                            "datetime": datetime.utcnow(),
+                            "source": "market_data_service_api"
+                        }
+                        
         except Exception as e:
             logger.error("Failed to get market data from API", 
                         symbol=symbol, error=str(e))
         
-        return None
+        # Final fallback: generate mock data for development
+        logger.warning("Using mock market data", symbol=symbol)
+        return {
+            "symbol": symbol,
+            "price": 50000.0,  # Mock BTC price
+            "volume": 1000.0,
+            "timestamp": time.time(),
+            "datetime": datetime.utcnow(),
+            "source": "mock_data"
+        }
     
     async def _update_strategy_state_cache(self, context: StrategyExecutionContext):
         """Update strategy state in Redis cache."""

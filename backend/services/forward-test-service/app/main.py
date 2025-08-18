@@ -33,6 +33,8 @@ from .services import DatabaseService, MarketDataService, StrategyService, Tradi
 from .auth import get_current_user, User
 from .session_manager import SessionStateManager, SessionValidator, SessionMetricsCalculator
 from .strategy_executor import strategy_executor, performance_monitor
+from .portfolio_manager import portfolio_manager
+from .session_event_publisher import session_event_publisher
 
 # Configure logging
 structlog.configure(
@@ -97,7 +99,7 @@ async def lifespan(app: FastAPI):
     # Initialize services
     await DatabaseService.initialize()
     await session_manager.initialize()
-    await strategy_executor.initialize()
+    await strategy_executor.initialize()  # This will also initialize portfolio_manager and session_event_publisher
     await performance_monitor.initialize()
     
     # Start background tasks
@@ -428,7 +430,7 @@ async def restore_session_data(
     request: Dict[str, str],
     current_user: User = Depends(get_current_user)
 ) -> Dict[str, Any]:
-    """Restore session data (PLACEHOLDER)."""
+    """Restore session data."""
     try:
         session_id = request.get("session_id")
         if not session_id:
@@ -436,19 +438,33 @@ async def restore_session_data(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="session_id required"
             )
-            
-        # TODO: Implement session data restoration
-        logger.info("Session restoration requested (PLACEHOLDER)", session_id=session_id)
+        
+        session_uuid = UUID(session_id)
+        
+        # Restore chart data
+        success, chart_data = await session_event_publisher.restore_session_chart_data(
+            session_uuid, UUID(current_user.id)
+        )
+        
+        # Get portfolio data
+        portfolio_summary = await portfolio_manager.get_portfolio_summary(session_uuid)
+        
+        # Get recent trades
+        trades = await portfolio_manager.get_recent_trades(session_uuid, 50)
+        
+        # Get session from database
+        session = await DatabaseService.get_session(session_uuid, UUID(current_user.id))
         
         return {
-            "success": True,
+            "success": success,
             "data": {
-                "session": {"id": session_id, "status": "restored"},
-                "chart_data": [],
-                "trades": [],
+                "session": session.dict() if session else None,
+                "chart_data": chart_data,
+                "portfolio": portfolio_summary,
+                "trades": trades,
                 "restored_at": time.time()
             },
-            "message": "Session restoration not yet implemented - PLACEHOLDER response"
+            "message": "Session data restored successfully" if success else "Failed to restore session data"
         }
         
     except HTTPException:
@@ -469,22 +485,21 @@ async def get_portfolio(
 ):
     """Get current portfolio summary for session."""
     try:
-        # TODO: Implement portfolio calculation
-        portfolio = PortfolioSummary(
-            session_id=session_id,
-            cash_balance=100000,
-            total_value=100000,
-            total_pnl=0,
-            total_pnl_percent=0.0,
-            positions=[],
-            position_count=0,
-            updated_at=time.time()
-        )
+        portfolio_summary = await portfolio_manager.get_portfolio_summary(session_id)
+        
+        if not portfolio_summary:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Portfolio not found for session"
+            )
+        
         return StandardResponse.success_response(
-            data=portfolio,
+            data=portfolio_summary,
             message="Portfolio retrieved successfully"
         )
         
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error("Failed to get portfolio", session_id=str(session_id), error=str(e))
         raise HTTPException(
@@ -583,8 +598,7 @@ async def get_session_trades(
 ):
     """Get trades for session."""
     try:
-        # TODO: Implement trade history retrieval
-        trades = []
+        trades = await portfolio_manager.get_recent_trades(session_id, limit)
         return ListResponse.trades_response(trades, "Trades retrieved successfully")
         
     except Exception as e:
@@ -598,18 +612,21 @@ async def get_session_trades(
 @app.get("/{session_id}/chart")
 async def get_chart_data(
     session_id: UUID,
+    limit: int = 1000,
     current_user: User = Depends(get_current_user)
 ):
     """Get chart data for session."""
     try:
-        # TODO: Implement chart data retrieval
-        chart_data = SessionChartData(
+        chart_data = await session_event_publisher.get_recent_chart_data(session_id, limit)
+        
+        response_data = SessionChartData(
             session_id=session_id,
-            data_points=[],
+            data_points=chart_data,
             updated_at=time.time()
         )
+        
         return StandardResponse.success_response(
-            data=chart_data,
+            data=response_data,
             message="Chart data retrieved successfully"
         )
         

@@ -1,15 +1,31 @@
 """
 AlgoTrade Backtesting Service
-PLACEHOLDER IMPLEMENTATION - Handles backtesting requests with placeholder responses.
+Historical data processing with comprehensive strategy testing and advanced analytics.
 """
 
+import asyncio
 import time
-from typing import Dict, Any
+import uuid
+from contextlib import asynccontextmanager
+from typing import Dict, List, Any, Optional
+from uuid import UUID
 
 import structlog
 import uvicorn
-from fastapi import FastAPI, HTTPException, status
+from fastapi import FastAPI, HTTPException, status, Depends, BackgroundTasks
 from fastapi.responses import JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
+
+from .config import settings
+from .models import (
+    BacktestRequest, BacktestResponse, BacktestStatus, BacktestJob,
+    BacktestResults, BacktestMetrics
+)
+from .services import (
+    DatabaseService, HistoricalDataService, StrategyService,
+    BacktestEngine, AnalyticsEngine, JobQueue
+)
+from .auth import get_current_user, User
 
 # Configure logging
 structlog.configure(
@@ -25,187 +41,455 @@ structlog.configure(
 
 logger = structlog.get_logger()
 
+# Global services
+database_service = DatabaseService()
+historical_data_service = HistoricalDataService()
+strategy_service = StrategyService()
+backtest_engine = BacktestEngine()
+analytics_engine = AnalyticsEngine()
+job_queue = JobQueue()
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Application lifespan management."""
+    logger.info("🚀 Starting Backtesting Service")
+    
+    # Initialize services
+    await database_service.initialize()
+    await historical_data_service.initialize()
+    await strategy_service.initialize()
+    await backtest_engine.initialize()
+    await analytics_engine.initialize()
+    await job_queue.initialize()
+    
+    # Start background workers
+    asyncio.create_task(job_worker())
+    asyncio.create_task(cleanup_worker())
+    
+    logger.info("✅ Backtesting Service initialized")
+    
+    yield
+    
+    logger.info("🛑 Shutting down Backtesting Service")
+    
+    # Shutdown services
+    await job_queue.shutdown()
+    await backtest_engine.shutdown()
+    await historical_data_service.shutdown()
+    await database_service.shutdown()
+
+
 app = FastAPI(
     title="AlgoTrade Backtesting Service",
-    description="Backtesting service with placeholder responses",
-    version="0.1.0"
+    description="Historical strategy testing with advanced analytics",
+    version="1.0.0",
+    lifespan=lifespan
+)
+
+# CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173", "http://localhost:3000"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 
-@app.post("/run")
-async def run_backtest(request: Dict[str, Any]) -> Dict[str, Any]:
+@app.post("/run", response_model=BacktestResponse)
+async def run_backtest(
+    request: BacktestRequest,
+    background_tasks: BackgroundTasks,
+    current_user: User = Depends(get_current_user)
+) -> BacktestResponse:
     """
-    Run a backtest (PLACEHOLDER IMPLEMENTATION).
-    
-    Expected request format from frontend:
-    {
-        "ticker": "BTC/USD",
-        "fromDate": "2023-01-01T05:00:00.000Z",
-        "toDate": "2023-12-31T05:00:00.000Z", 
-        "interval": "1d",
-        "strategy_id": "uuid" OR "strategy": "template_name",
-        "type": "custom" OR "template"
-    }
+    Submit a backtest job for execution.
+    Returns job ID for tracking progress and retrieving results.
     """
     try:
-        logger.info("Backtest request received (PLACEHOLDER)", request=request)
+        logger.info("Backtest request received", 
+                   user_id=current_user.id,
+                   symbol=request.symbol,
+                   strategy_id=request.strategy_id)
         
-        # Extract request parameters
-        ticker = request.get("ticker", "BTC/USD")
-        from_date = request.get("fromDate")
-        to_date = request.get("toDate") 
-        interval = request.get("interval", "1d")
-        strategy_id = request.get("strategy_id")
-        strategy = request.get("strategy")
-        req_type = request.get("type", "template")
-        
-        # Validate required parameters
-        if not from_date or not to_date:
+        # Validate request parameters
+        if not await _validate_backtest_request(request):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="fromDate and toDate are required"
+                detail="Invalid backtest parameters"
             )
-            
-        if not strategy_id and not strategy:
+        
+        # Get strategy from Strategy Service
+        strategy = await strategy_service.get_compiled_strategy(request.strategy_id)
+        if not strategy:
             raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Either strategy_id or strategy is required"
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Strategy not found or not compiled"
             )
         
-        # Generate placeholder backtest results
-        placeholder_results = {
-            "success": True,
-            "data": {
-                "total_trades": 25,
-                "winning_trades": 15,
-                "losing_trades": 10,
-                "win_rate": 0.60,
-                "total_return": 0.15,  # 15% return
-                "total_return_percent": 15.0,
-                "max_drawdown": -0.08,  # 8% max drawdown
-                "max_drawdown_percent": -8.0,
-                "sharpe_ratio": 1.2,
-                "sortino_ratio": 1.5,
-                "calmar_ratio": 1.875,  # 15% / 8%
-                "volatility": 0.12,
-                "final_portfolio_value": 115000,
-                "initial_portfolio_value": 100000,
-                "gross_profit": 25000,
-                "gross_loss": -10000,
-                "net_profit": 15000,
-                "profit_factor": 2.5,
-                "average_trade": 600,
-                "largest_win": 3500,
-                "largest_loss": -2200,
-                "consecutive_wins": 6,
-                "consecutive_losses": 3
-            },
-            "chart_data": [
-                {"timestamp": time.time() - 86400 * 30, "portfolio_value": 100000, "price": 45000},
-                {"timestamp": time.time() - 86400 * 20, "portfolio_value": 107500, "price": 48000}, 
-                {"timestamp": time.time() - 86400 * 10, "portfolio_value": 112000, "price": 52000},
-                {"timestamp": time.time(), "portfolio_value": 115000, "price": 55000}
-            ],
-            "trades": [
-                {
-                    "id": 1,
-                    "symbol": ticker,
-                    "side": "buy",
-                    "quantity": 0.1,
-                    "price": 45000,
-                    "timestamp": time.time() - 86400 * 25,
-                    "pnl": 0
-                },
-                {
-                    "id": 2, 
-                    "symbol": ticker,
-                    "side": "sell",
-                    "quantity": 0.1,
-                    "price": 48000,
-                    "timestamp": time.time() - 86400 * 20,
-                    "pnl": 3000
-                }
-            ],
-            "metadata": {
-                "strategy": strategy or f"Strategy {strategy_id}",
-                "symbol": ticker,
-                "start_date": from_date,
-                "end_date": to_date,
-                "interval": interval,
-                "total_periods": 365,
-                "execution_time_ms": 1500
-            }
-        }
-        
-        logger.info(
-            "Backtest completed (PLACEHOLDER)",
-            ticker=ticker,
-            strategy=strategy or strategy_id,
-            total_return=placeholder_results["data"]["total_return"]
+        # Create backtest job
+        job_id = uuid.uuid4()
+        job = BacktestJob(
+            job_id=job_id,
+            user_id=UUID(current_user.id),
+            request=request,
+            strategy=strategy,
+            status=BacktestStatus.QUEUED,
+            created_at=time.time()
         )
         
-        return placeholder_results
+        # Store job in database
+        await database_service.create_backtest_job(job)
+        
+        # Queue job for processing
+        await job_queue.enqueue_job(job)
+        
+        logger.info("Backtest job created", 
+                   job_id=str(job_id),
+                   user_id=current_user.id)
+        
+        return BacktestResponse(
+            success=True,
+            job_id=str(job_id),
+            status=BacktestStatus.QUEUED,
+            message="Backtest job submitted successfully",
+            estimated_duration=await _estimate_backtest_duration(request)
+        )
         
     except HTTPException:
         raise
     except Exception as e:
-        logger.error("Backtest execution failed", error=str(e))
+        logger.error("Backtest submission failed", 
+                    user_id=current_user.id, error=str(e))
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Backtest execution failed: {str(e)}"
+            detail="Failed to submit backtest"
         )
 
 
-@app.get("/{backtest_id}")
-async def get_backtest_result(backtest_id: str) -> Dict[str, Any]:
-    """Get backtest results by ID (PLACEHOLDER)."""
+@app.get("/{job_id}", response_model=BacktestResponse)
+async def get_backtest_result(
+    job_id: UUID,
+    current_user: User = Depends(get_current_user)
+) -> BacktestResponse:
+    """Get backtest results and status by job ID."""
     try:
-        logger.info("Backtest result requested (PLACEHOLDER)", backtest_id=backtest_id)
+        # Get job from database
+        job = await database_service.get_backtest_job(job_id, UUID(current_user.id))
+        if not job:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Backtest not found"
+            )
         
-        return {
-            "success": True,
-            "backtest_id": backtest_id,
-            "message": "Backtest result retrieval not yet implemented - PLACEHOLDER response",
-            "data": None
-        }
+        # Get results if completed
+        results = None
+        if job.status == BacktestStatus.COMPLETED:
+            results = await database_service.get_backtest_results(job_id)
         
+        return BacktestResponse(
+            success=True,
+            job_id=str(job_id),
+            status=job.status,
+            message=_get_status_message(job.status),
+            progress=job.progress,
+            results=results,
+            error_message=job.error_message,
+            created_at=job.created_at,
+            completed_at=job.completed_at
+        )
+        
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error("Failed to get backtest result", backtest_id=backtest_id, error=str(e))
+        logger.error("Failed to get backtest result", 
+                    job_id=str(job_id), error=str(e))
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to retrieve backtest result"
         )
 
 
-@app.get("/")
-async def list_backtests() -> Dict[str, Any]:
-    """List user's backtests (PLACEHOLDER)."""
+@app.get("/", response_model=List[BacktestResponse])
+async def list_backtests(
+    limit: int = 20,
+    offset: int = 0,
+    status_filter: Optional[BacktestStatus] = None,
+    current_user: User = Depends(get_current_user)
+) -> List[BacktestResponse]:
+    """List user's backtest jobs with optional filtering."""
     try:
-        logger.info("Backtest list requested (PLACEHOLDER)")
+        jobs = await database_service.list_backtest_jobs(
+            user_id=UUID(current_user.id),
+            limit=limit,
+            offset=offset,
+            status_filter=status_filter
+        )
         
-        return {
-            "success": True,
-            "backtests": [],
-            "message": "Backtest listing not yet implemented - PLACEHOLDER response"
-        }
+        responses = []
+        for job in jobs:
+            # Get results for completed jobs
+            results = None
+            if job.status == BacktestStatus.COMPLETED:
+                results = await database_service.get_backtest_results(job.job_id)
+            
+            responses.append(BacktestResponse(
+                success=True,
+                job_id=str(job.job_id),
+                status=job.status,
+                message=_get_status_message(job.status),
+                progress=job.progress,
+                results=results,
+                error_message=job.error_message,
+                created_at=job.created_at,
+                completed_at=job.completed_at
+            ))
+        
+        return responses
         
     except Exception as e:
-        logger.error("Failed to list backtests", error=str(e))
+        logger.error("Failed to list backtests", 
+                    user_id=current_user.id, error=str(e))
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to list backtests"
         )
 
 
-# Health check
+@app.delete("/{job_id}")
+async def cancel_backtest(
+    job_id: UUID,
+    current_user: User = Depends(get_current_user)
+) -> Dict[str, Any]:
+    """Cancel a running or queued backtest job."""
+    try:
+        # Get job
+        job = await database_service.get_backtest_job(job_id, UUID(current_user.id))
+        if not job:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Backtest not found"
+            )
+        
+        # Check if cancellable
+        if job.status not in [BacktestStatus.QUEUED, BacktestStatus.RUNNING]:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Cannot cancel backtest in status: {job.status}"
+            )
+        
+        # Cancel job
+        await job_queue.cancel_job(job_id)
+        await database_service.update_job_status(
+            job_id, BacktestStatus.CANCELLED, "Cancelled by user"
+        )
+        
+        logger.info("Backtest cancelled", job_id=str(job_id), user_id=current_user.id)
+        
+        return {
+            "success": True,
+            "job_id": str(job_id),
+            "message": "Backtest cancelled successfully"
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Failed to cancel backtest", 
+                    job_id=str(job_id), error=str(e))
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to cancel backtest"
+        )
+
+
+@app.get("/{job_id}/metrics", response_model=BacktestMetrics)
+async def get_backtest_metrics(
+    job_id: UUID,
+    current_user: User = Depends(get_current_user)
+) -> BacktestMetrics:
+    """Get detailed performance metrics for a completed backtest."""
+    try:
+        # Get job and verify ownership
+        job = await database_service.get_backtest_job(job_id, UUID(current_user.id))
+        if not job:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Backtest not found"
+            )
+        
+        if job.status != BacktestStatus.COMPLETED:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Backtest not completed"
+            )
+        
+        # Get detailed metrics
+        metrics = await analytics_engine.calculate_detailed_metrics(job_id)
+        if not metrics:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Metrics not found"
+            )
+        
+        return metrics
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Failed to get backtest metrics", 
+                    job_id=str(job_id), error=str(e))
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to retrieve metrics"
+        )
+
+
+# Background task workers
+async def job_worker():
+    """Background worker for processing backtest jobs."""
+    logger.info("Starting backtest job worker")
+    
+    while True:
+        try:
+            # Get next job from queue
+            job = await job_queue.dequeue_job()
+            
+            if job:
+                logger.info("Processing backtest job", job_id=str(job.job_id))
+                
+                # Update status to running
+                await database_service.update_job_status(
+                    job.job_id, BacktestStatus.RUNNING
+                )
+                
+                # Process the backtest
+                try:
+                    results = await backtest_engine.run_backtest(job)
+                    
+                    # Store results
+                    await database_service.store_backtest_results(job.job_id, results)
+                    
+                    # Update status to completed
+                    await database_service.update_job_status(
+                        job.job_id, BacktestStatus.COMPLETED
+                    )
+                    
+                    logger.info("Backtest job completed", job_id=str(job.job_id))
+                    
+                except Exception as e:
+                    # Handle job failure
+                    error_msg = f"Backtest execution failed: {str(e)}"
+                    await database_service.update_job_status(
+                        job.job_id, BacktestStatus.FAILED, error_msg
+                    )
+                    
+                    logger.error("Backtest job failed", 
+                               job_id=str(job.job_id), error=str(e))
+            else:
+                # No jobs available, wait before checking again
+                await asyncio.sleep(5)
+                
+        except Exception as e:
+            logger.error("Job worker error", error=str(e))
+            await asyncio.sleep(10)
+
+
+async def cleanup_worker():
+    """Background worker for cleaning up old backtest data."""
+    while True:
+        try:
+            await database_service.cleanup_old_backtests(
+                max_age_days=settings.BACKTEST_RETENTION_DAYS
+            )
+            
+            # Sleep for 1 hour before next cleanup
+            await asyncio.sleep(3600)
+            
+        except Exception as e:
+            logger.error("Cleanup worker error", error=str(e))
+            await asyncio.sleep(300)  # Wait 5 minutes on error
+
+
+# Helper functions
+async def _validate_backtest_request(request: BacktestRequest) -> bool:
+    """Validate backtest request parameters."""
+    try:
+        # Check date range
+        if request.start_date >= request.end_date:
+            return False
+        
+        # Check if date range is reasonable (not too large)
+        date_diff = request.end_date - request.start_date
+        if date_diff.days > settings.MAX_BACKTEST_DAYS:
+            return False
+        
+        # Validate symbol exists
+        symbol_exists = await historical_data_service.validate_symbol(request.symbol)
+        if not symbol_exists:
+            return False
+        
+        return True
+        
+    except Exception as e:
+        logger.error("Request validation error", error=str(e))
+        return False
+
+
+async def _estimate_backtest_duration(request: BacktestRequest) -> int:
+    """Estimate backtest duration in seconds."""
+    try:
+        date_diff = request.end_date - request.start_date
+        days = date_diff.days
+        
+        # Simple estimation: ~1 second per day for daily data
+        if request.interval == "1d":
+            return max(10, min(days, 300))  # 10 seconds minimum, 5 minutes maximum
+        elif request.interval == "1h":
+            return max(30, min(days * 2, 600))  # More time for hourly data
+        else:
+            return max(60, min(days * 5, 1800))  # Even more for minute data
+            
+    except Exception:
+        return 60  # Default to 1 minute
+
+
+def _get_status_message(status: BacktestStatus) -> str:
+    """Get human-readable status message."""
+    messages = {
+        BacktestStatus.QUEUED: "Backtest is queued for processing",
+        BacktestStatus.RUNNING: "Backtest is currently running",
+        BacktestStatus.COMPLETED: "Backtest completed successfully",
+        BacktestStatus.FAILED: "Backtest failed during execution",
+        BacktestStatus.CANCELLED: "Backtest was cancelled"
+    }
+    return messages.get(status, "Unknown status")
+
+
+# Health check and monitoring
 @app.get("/health")
 async def health_check():
-    """Health check endpoint."""
+    """Health check endpoint with service statistics."""
+    stats = await job_queue.get_queue_stats()
+    
     return {
         "status": "healthy",
         "timestamp": time.time(),
         "service": "backtesting-service",
-        "message": "PLACEHOLDER SERVICE - Not fully implemented"
+        "queue_stats": stats,
+        "database_connected": await database_service.is_connected(),
+        "historical_data_available": await historical_data_service.is_available()
+    }
+
+
+@app.get("/stats")
+async def get_service_stats():
+    """Get service statistics for monitoring."""
+    return {
+        "queue_stats": await job_queue.get_queue_stats(),
+        "database_stats": await database_service.get_stats(),
+        "processing_stats": await backtest_engine.get_stats()
     }
 
 
@@ -214,5 +498,5 @@ if __name__ == "__main__":
         "app.main:app",
         host="0.0.0.0",
         port=8004,
-        reload=True
+        reload=settings.DEBUG
     )

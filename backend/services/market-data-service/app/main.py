@@ -25,7 +25,7 @@ from shared.models.market_data_models import (
 )
 from .config import settings
 from .services import RedisStreamService, CoinbaseWebSocketService, KafkaService
-from .data_providers import CoinbaseProvider, FinnhubProvider
+from .data_providers import CoinbaseProvider, FinnhubProvider, DataProviderManager
 
 # Configure logging
 structlog.configure(
@@ -50,6 +50,7 @@ async def lifespan(app: FastAPI):
     # Initialize services
     await RedisStreamService.initialize()
     await KafkaService.initialize()
+    await DataProviderManager.initialize()
     
     # Start background tasks
     asyncio.create_task(CoinbaseWebSocketService.start_feeds())
@@ -231,17 +232,10 @@ async def get_historical_data(request: MarketDataRequest) -> MarketDataResponse:
         # For now, return data for first symbol
         symbol = request.symbols[0]
         
-        # Try Coinbase first, fallback to Finnhub
-        try:
-            data = await CoinbaseProvider.get_historical_data(
-                symbol, request.start_date, request.end_date, request.interval
-            )
-            source = "coinbase"
-        except Exception:
-            data = await FinnhubProvider.get_historical_data(
-                symbol, request.start_date, request.end_date, request.interval
-            )
-            source = "finnhub"
+        # Use enhanced provider manager with failover
+        data, source = await DataProviderManager.get_historical_data_unified(
+            symbol, request.start_date, request.end_date, request.interval
+        )
         
         return MarketDataResponse(
             symbol=symbol,

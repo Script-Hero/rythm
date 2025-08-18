@@ -1,18 +1,108 @@
 """Data providers for market data service."""
 
 import asyncio
-from datetime import datetime
-from typing import List, Dict, Any, Optional
+from datetime import datetime, timedelta
+from typing import List, Dict, Any, Optional, Tuple
 from decimal import Decimal
+import hashlib
+import json
 
 import httpx
 import ccxt.async_support as ccxt
 import pandas as pd
 import structlog
+import redis.asyncio as redis
 
 from .config import settings
 
 logger = structlog.get_logger()
+
+
+class HistoricalDataCache:
+    """Redis-based cache for historical market data."""
+    
+    redis_client = None
+    cache_ttl = 3600  # 1 hour cache TTL
+    
+    @classmethod
+    async def initialize(cls):
+        """Initialize Redis connection for caching."""
+        cls.redis_client = redis.from_url(settings.REDIS_URL)
+        await cls.redis_client.ping()
+        logger.info("Historical data cache initialized")
+    
+    @classmethod
+    def _generate_cache_key(cls, symbol: str, start_date: datetime, end_date: datetime, interval: str) -> str:
+        """Generate cache key for historical data request."""
+        key_data = f"{symbol}:{start_date.isoformat()}:{end_date.isoformat()}:{interval}"
+        return f"historical_data:{hashlib.md5(key_data.encode()).hexdigest()}"
+    
+    @classmethod
+    async def get_cached_data(
+        cls, 
+        symbol: str, 
+        start_date: datetime, 
+        end_date: datetime, 
+        interval: str
+    ) -> Optional[List[Dict[str, Any]]]:
+        """Get cached historical data if available."""
+        if not cls.redis_client:
+            return None
+        
+        try:
+            cache_key = cls._generate_cache_key(symbol, start_date, end_date, interval)
+            cached_data = await cls.redis_client.get(cache_key)
+            
+            if cached_data:
+                data = json.loads(cached_data)
+                logger.debug("Retrieved cached historical data", 
+                           symbol=symbol, points=len(data))
+                return data
+            
+            return None
+            
+        except Exception as e:
+            logger.error("Failed to get cached data", error=str(e))
+            return None
+    
+    @classmethod
+    async def cache_data(
+        cls,
+        symbol: str,
+        start_date: datetime,
+        end_date: datetime,
+        interval: str,
+        data: List[Dict[str, Any]]
+    ):
+        """Cache historical data."""
+        if not cls.redis_client or not data:
+            return
+        
+        try:
+            cache_key = cls._generate_cache_key(symbol, start_date, end_date, interval)
+            
+            # Convert data to JSON-serializable format
+            serializable_data = []
+            for point in data:
+                serializable_point = {}
+                for key, value in point.items():
+                    if isinstance(value, (Decimal, datetime)):
+                        serializable_point[key] = str(value)
+                    else:
+                        serializable_point[key] = value
+                serializable_data.append(serializable_point)
+            
+            await cls.redis_client.setex(
+                cache_key,
+                cls.cache_ttl,
+                json.dumps(serializable_data)
+            )
+            
+            logger.debug("Cached historical data", 
+                        symbol=symbol, points=len(data))
+            
+        except Exception as e:
+            logger.error("Failed to cache data", error=str(e))
 
 
 class CoinbaseProvider:
@@ -100,7 +190,19 @@ class CoinbaseProvider:
         end_date: Optional[datetime] = None,
         interval: str = "1h"
     ) -> List[Dict[str, Any]]:
-        """Get historical OHLCV data."""
+        """Get historical OHLCV data with caching."""
+        # Set default date range if not provided
+        if not start_date:
+            start_date = datetime.utcnow() - timedelta(days=30)
+        if not end_date:
+            end_date = datetime.utcnow()
+        
+        # Check cache first
+        cached_data = await HistoricalDataCache.get_cached_data(symbol, start_date, end_date, interval)
+        if cached_data:
+            return cached_data
+        
+        # Fetch fresh data
         await cls.initialize()
         
         try:
@@ -115,12 +217,6 @@ class CoinbaseProvider:
             }
             
             timeframe = interval_map.get(interval, '1h')
-            
-            # Set default date range if not provided
-            if not start_date:
-                start_date = datetime.utcnow() - pd.Timedelta(days=30)
-            if not end_date:
-                end_date = datetime.utcnow()
             
             # Fetch OHLCV data
             since = int(start_date.timestamp() * 1000)  # ccxt expects milliseconds
@@ -150,6 +246,9 @@ class CoinbaseProvider:
                     'close': Decimal(str(candle[4])),
                     'volume': Decimal(str(candle[5]))
                 })
+            
+            # Cache the data
+            await HistoricalDataCache.cache_data(symbol, start_date, end_date, interval, data)
             
             logger.info("Fetched historical data", symbol=symbol, count=len(data))
             return data
@@ -315,36 +414,107 @@ class FinnhubProvider:
 
 
 class DataProviderManager:
-    """Manager for coordinating multiple data providers."""
+    """Enhanced manager for coordinating multiple data providers with failover."""
+    
+    # Provider priority order for different asset types
+    PROVIDER_PRIORITY = {
+        'crypto': ['coinbase', 'finnhub'],
+        'stock': ['finnhub', 'coinbase'],
+        'default': ['coinbase', 'finnhub']
+    }
+    
+    @classmethod
+    async def initialize(cls):
+        """Initialize the data provider manager."""
+        await HistoricalDataCache.initialize()
+        logger.info("Data provider manager initialized")
     
     @classmethod
     async def get_best_provider_for_symbol(cls, symbol: str) -> str:
         """Determine the best data provider for a symbol."""
-        if '/' in symbol and any(crypto in symbol.upper() for crypto in ['BTC', 'ETH', 'LTC', 'ADA']):
+        if '/' in symbol and any(crypto in symbol.upper() for crypto in ['BTC', 'ETH', 'LTC', 'ADA', 'SOL', 'DOT']):
             return 'coinbase'
-        elif '/USD' in symbol:
+        elif '/USD' in symbol and not any(crypto in symbol.upper() for crypto in ['BTC', 'ETH']):
             return 'finnhub'
         else:
             return 'coinbase'  # Default
     
     @classmethod
     async def get_current_price_unified(cls, symbol: str) -> Dict[str, Any]:
-        """Get current price using the best provider."""
-        provider = await cls.get_best_provider_for_symbol(symbol)
+        """Get current price using the best provider with failover."""
+        primary_provider = await cls.get_best_provider_for_symbol(symbol)
         
-        if provider == 'coinbase':
-            return await CoinbaseProvider.get_current_price(symbol)
-        elif provider == 'finnhub':
-            return await FinnhubProvider.get_current_price(symbol)
-        else:
-            raise Exception(f"No provider available for {symbol}")
+        # Try primary provider first
+        try:
+            if primary_provider == 'coinbase':
+                return await CoinbaseProvider.get_current_price(symbol)
+            elif primary_provider == 'finnhub':
+                return await FinnhubProvider.get_current_price(symbol)
+        except Exception as e:
+            logger.warning("Primary provider failed", provider=primary_provider, symbol=symbol, error=str(e))
+        
+        # Fallback to other providers
+        fallback_provider = 'finnhub' if primary_provider == 'coinbase' else 'coinbase'
+        
+        try:
+            if fallback_provider == 'coinbase':
+                result = await CoinbaseProvider.get_current_price(symbol)
+                result['fallback_used'] = True
+                return result
+            elif fallback_provider == 'finnhub':
+                result = await FinnhubProvider.get_current_price(symbol)
+                result['fallback_used'] = True
+                return result
+        except Exception as e:
+            logger.error("Fallback provider also failed", provider=fallback_provider, symbol=symbol, error=str(e))
+        
+        raise Exception(f"All providers failed for symbol {symbol}")
+    
+    @classmethod
+    async def get_historical_data_unified(
+        cls,
+        symbol: str,
+        start_date: Optional[datetime] = None,
+        end_date: Optional[datetime] = None,
+        interval: str = "1h"
+    ) -> Tuple[List[Dict[str, Any]], str]:
+        """Get historical data with provider failover."""
+        primary_provider = await cls.get_best_provider_for_symbol(symbol)
+        
+        # Try primary provider first
+        try:
+            if primary_provider == 'coinbase':
+                data = await CoinbaseProvider.get_historical_data(symbol, start_date, end_date, interval)
+                return data, 'coinbase'
+            elif primary_provider == 'finnhub':
+                data = await FinnhubProvider.get_historical_data(symbol, start_date, end_date, interval)
+                return data, 'finnhub'
+        except Exception as e:
+            logger.warning("Primary provider failed for historical data", 
+                         provider=primary_provider, symbol=symbol, error=str(e))
+        
+        # Fallback to other providers
+        fallback_provider = 'finnhub' if primary_provider == 'coinbase' else 'coinbase'
+        
+        try:
+            if fallback_provider == 'coinbase':
+                data = await CoinbaseProvider.get_historical_data(symbol, start_date, end_date, interval)
+                return data, f'{fallback_provider}_fallback'
+            elif fallback_provider == 'finnhub':
+                data = await FinnhubProvider.get_historical_data(symbol, start_date, end_date, interval)
+                return data, f'{fallback_provider}_fallback'
+        except Exception as e:
+            logger.error("Fallback provider also failed for historical data", 
+                        provider=fallback_provider, symbol=symbol, error=str(e))
+        
+        raise Exception(f"All providers failed for historical data: {symbol}")
     
     @classmethod
     async def get_all_symbols(cls) -> List[Dict[str, Any]]:
-        """Get symbols from all providers."""
+        """Get symbols from all providers with error handling."""
         tasks = [
-            CoinbaseProvider.get_available_symbols(),
-            FinnhubProvider.get_available_symbols()
+            cls._safe_get_symbols('coinbase', CoinbaseProvider.get_available_symbols),
+            cls._safe_get_symbols('finnhub', FinnhubProvider.get_available_symbols)
         ]
         
         results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -353,7 +523,55 @@ class DataProviderManager:
         for result in results:
             if isinstance(result, list):
                 all_symbols.extend(result)
-            else:
-                logger.error("Provider failed", error=str(result))
         
+        logger.info("Retrieved symbols from providers", total_symbols=len(all_symbols))
         return all_symbols
+    
+    @classmethod
+    async def _safe_get_symbols(cls, provider_name: str, provider_func) -> List[Dict[str, Any]]:
+        """Safely get symbols from a provider."""
+        try:
+            symbols = await provider_func()
+            logger.info("Retrieved symbols", provider=provider_name, count=len(symbols))
+            return symbols
+        except Exception as e:
+            logger.error("Provider failed to get symbols", provider=provider_name, error=str(e))
+            return []
+    
+    @classmethod
+    async def health_check(cls) -> Dict[str, Any]:
+        """Check health of all data providers."""
+        health_status = {
+            'coinbase': {'status': 'unknown', 'error': None},
+            'finnhub': {'status': 'unknown', 'error': None},
+            'cache': {'status': 'unknown', 'error': None}
+        }
+        
+        # Test Coinbase
+        try:
+            await CoinbaseProvider.get_available_symbols()
+            health_status['coinbase']['status'] = 'healthy'
+        except Exception as e:
+            health_status['coinbase']['status'] = 'unhealthy'
+            health_status['coinbase']['error'] = str(e)
+        
+        # Test Finnhub
+        try:
+            await FinnhubProvider.get_available_symbols()
+            health_status['finnhub']['status'] = 'healthy'
+        except Exception as e:
+            health_status['finnhub']['status'] = 'unhealthy'
+            health_status['finnhub']['error'] = str(e)
+        
+        # Test Cache
+        try:
+            if HistoricalDataCache.redis_client:
+                await HistoricalDataCache.redis_client.ping()
+                health_status['cache']['status'] = 'healthy'
+            else:
+                health_status['cache']['status'] = 'not_initialized'
+        except Exception as e:
+            health_status['cache']['status'] = 'unhealthy'
+            health_status['cache']['error'] = str(e)
+        
+        return health_status
