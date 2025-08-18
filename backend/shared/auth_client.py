@@ -9,7 +9,12 @@ from typing import Optional
 from functools import lru_cache
 import structlog
 
-from .models.user_models import UserResponse
+try:
+    # For when imported as 'from shared.auth_client' (API Gateway)
+    from .models.user_models import UserResponse
+except ImportError:
+    # For when shared folder is added to sys.path (Analytics Service)
+    from models.user_models import UserResponse
 
 logger = structlog.get_logger()
 

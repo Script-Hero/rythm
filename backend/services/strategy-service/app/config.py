@@ -16,7 +16,7 @@ class Settings(BaseSettings):
     # Database
     DATABASE_URL: str = os.getenv(
         "DATABASE_URL", 
-        "postgresql://algotrade:algotrade_pass@postgres:5432/algotrade"
+        "postgresql+psycopg://algotrade:algotrade_pass@postgres:5432/algotrade"
     )
     
     # Redis

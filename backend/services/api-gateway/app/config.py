@@ -32,7 +32,7 @@ class Settings(BaseSettings):
     # Database
     POSTGRES_URL: str = os.getenv(
         "POSTGRES_URL", 
-        "postgresql://algotrade:algotrade_pass@postgres:5432/algotrade"
+        "postgresql+psycopg://algotrade:algotrade_pass@postgres:5432/algotrade"
     )
     
     # Redis

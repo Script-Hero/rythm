@@ -7,8 +7,14 @@ from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from typing import Optional
 
-from .models.user_models import UserResponse
-from .auth_client import get_auth_client
+try:
+    # For when imported as 'from shared.auth_dependency' (API Gateway)
+    from .models.user_models import UserResponse
+    from .auth_client import get_auth_client
+except ImportError:
+    # For when shared folder is added to sys.path (Analytics Service)
+    from models.user_models import UserResponse
+    from auth_client import get_auth_client
 
 # HTTP Bearer token scheme
 security = HTTPBearer()

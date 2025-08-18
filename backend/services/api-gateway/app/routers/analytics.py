@@ -1,10 +1,12 @@
 """
 API Gateway - Analytics Routes
-Placeholder routes for Analytics Service (not yet implemented).
+Proxy routes to Analytics Service.
 """
 
+import httpx
 import structlog
-from fastapi import APIRouter, HTTPException, Depends, status
+from fastapi import APIRouter, HTTPException, Depends, status, Request
+from fastapi.responses import JSONResponse
 from typing import Dict, Any
 
 import sys
@@ -18,91 +20,180 @@ logger = structlog.get_logger()
 
 router = APIRouter()
 
+# Analytics Service URL
+ANALYTICS_SERVICE_URL = os.getenv("ANALYTICS_SERVICE_URL", "http://localhost:8006")
 
-@router.get("/")
-async def get_analytics_overview(
+
+async def proxy_to_analytics_service(
+    request: Request,
+    path: str,
     current_user = Depends(get_current_user)
-) -> Dict[str, Any]:
-    """Get analytics overview (PLACEHOLDER)."""
+) -> JSONResponse:
+    """
+    Proxy request to Analytics Service.
+    
+    Args:
+        request: Original FastAPI request
+        path: Path to append to analytics service URL
+        current_user: Current authenticated user
+    """
     try:
-        logger.info("Analytics overview requested (PLACEHOLDER)", user_id=current_user.id)
+        # Get authorization header
+        auth_header = request.headers.get("authorization")
+        if not auth_header:
+            raise HTTPException(status_code=401, detail="No authorization header")
         
-        return {
-            "success": True,
-            "message": "Analytics service not yet implemented - PLACEHOLDER response",
-            "data": {
-                "total_strategies": 0,
-                "total_backtests": 0,
-                "total_forward_tests": 0,
-                "performance_summary": {
-                    "total_return": 0,
-                    "win_rate": 0,
-                    "sharpe_ratio": 0
-                }
-            }
+        headers = {
+            "authorization": auth_header,
+            "content-type": "application/json"
         }
         
-    except Exception as e:
-        logger.error("Analytics overview error", error=str(e))
+        # Construct URL
+        url = f"{ANALYTICS_SERVICE_URL}{path}"
+        
+        # Get query parameters
+        query_params = dict(request.query_params)
+        
+        async with httpx.AsyncClient() as client:
+            if request.method == "GET":
+                response = await client.get(url, headers=headers, params=query_params)
+            elif request.method == "POST":
+                body = await request.body()
+                response = await client.post(url, headers=headers, content=body, params=query_params)
+            elif request.method == "PUT":
+                body = await request.body()
+                response = await client.put(url, headers=headers, content=body, params=query_params)
+            elif request.method == "DELETE":
+                response = await client.delete(url, headers=headers, params=query_params)
+            else:
+                raise HTTPException(status_code=405, detail="Method not allowed")
+        
+        return JSONResponse(
+            status_code=response.status_code,
+            content=response.json(),
+            headers=dict(response.headers)
+        )
+    
+    except httpx.RequestError as e:
+        logger.error("Analytics service connection error", error=str(e))
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Analytics service unavailable"
+        )
+    
+    except httpx.HTTPStatusError as e:
+        logger.error("Analytics service HTTP error", status_code=e.response.status_code, error=str(e))
+        raise HTTPException(
+            status_code=e.response.status_code,
             detail="Analytics service error"
         )
-
-
-@router.get("/performance")
-async def get_performance_metrics(
-    current_user = Depends(get_current_user)
-) -> Dict[str, Any]:
-    """Get performance metrics (PLACEHOLDER)."""
-    try:
-        logger.info("Performance metrics requested (PLACEHOLDER)", user_id=current_user.id)
-        
-        return {
-            "success": True,
-            "message": "Performance analytics not yet implemented - PLACEHOLDER response",
-            "data": {
-                "portfolio_value": 100000,
-                "total_pnl": 0,
-                "daily_returns": [],
-                "monthly_returns": [],
-                "risk_metrics": {
-                    "sharpe_ratio": 0,
-                    "sortino_ratio": 0,
-                    "max_drawdown": 0,
-                    "volatility": 0
-                }
-            }
-        }
-        
+    
     except Exception as e:
-        logger.error("Performance metrics error", error=str(e))
+        logger.error("Analytics proxy error", error=str(e))
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Performance analytics error"
+            detail="Internal server error"
         )
 
 
-@router.get("/reports/{report_type}")
-async def get_analytics_report(
-    report_type: str,
+# Forward Testing Analytics Routes
+@router.get("/forward-test/{session_id}/live")
+async def get_live_analytics(
+    session_id: str,
+    request: Request,
     current_user = Depends(get_current_user)
-) -> Dict[str, Any]:
-    """Get analytics report (PLACEHOLDER)."""
+):
+    """Get real-time analytics for forward testing session."""
+    return await proxy_to_analytics_service(
+        request, 
+        f"/api/analytics/forward-test/{session_id}/live",
+        current_user
+    )
+
+
+@router.get("/forward-test/{session_id}/performance")
+async def get_forward_test_performance(
+    session_id: str,
+    request: Request,
+    current_user = Depends(get_current_user)
+):
+    """Get performance summary for forward testing session."""
+    return await proxy_to_analytics_service(
+        request,
+        f"/api/analytics/forward-test/{session_id}/performance",
+        current_user
+    )
+
+
+# Backtest Analytics Routes
+@router.get("/backtest/{backtest_id}/key-metrics")
+async def get_backtest_key_metrics(
+    backtest_id: str,
+    request: Request,
+    current_user = Depends(get_current_user)
+):
+    """Get key metrics for backtest result."""
+    return await proxy_to_analytics_service(
+        request,
+        f"/api/analytics/backtest/{backtest_id}/key-metrics",
+        current_user
+    )
+
+
+@router.get("/backtest/{backtest_id}/summary")
+async def get_backtest_summary(
+    backtest_id: str,
+    request: Request,
+    current_user = Depends(get_current_user)
+):
+    """Get complete analytics summary for backtest."""
+    return await proxy_to_analytics_service(
+        request,
+        f"/api/analytics/backtest/{backtest_id}/summary",
+        current_user
+    )
+
+
+@router.get("/backtest/{backtest_id}/drawdown")
+async def get_backtest_drawdown(
+    backtest_id: str,
+    request: Request,
+    current_user = Depends(get_current_user)
+):
+    """Get drawdown analysis for backtest (future implementation)."""
+    return await proxy_to_analytics_service(
+        request,
+        f"/api/analytics/backtest/{backtest_id}/drawdown",
+        current_user
+    )
+
+
+@router.get("/backtest/{backtest_id}/returns/{period}")
+async def get_backtest_returns(
+    backtest_id: str,
+    period: str,
+    request: Request,
+    current_user = Depends(get_current_user)
+):
+    """Get returns analysis for backtest (future implementation)."""
+    return await proxy_to_analytics_service(
+        request,
+        f"/api/analytics/backtest/{backtest_id}/returns/{period}",
+        current_user
+    )
+
+
+# Health Check
+@router.get("/health")
+async def analytics_health_check():
+    """Check Analytics Service health."""
     try:
-        logger.info("Analytics report requested (PLACEHOLDER)", 
-                   report_type=report_type, user_id=current_user.id)
-        
-        return {
-            "success": True,
-            "message": f"Analytics report '{report_type}' not yet implemented - PLACEHOLDER response",
-            "report_type": report_type,
-            "data": {}
-        }
-        
-    except Exception as e:
-        logger.error("Analytics report error", error=str(e))
+        async with httpx.AsyncClient() as client:
+            response = await client.get(f"{ANALYTICS_SERVICE_URL}/health")
+            return response.json()
+    
+    except httpx.RequestError:
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Analytics report error"
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Analytics service unavailable"
         )

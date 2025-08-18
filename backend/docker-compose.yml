@@ -231,7 +231,7 @@ services:
     ports:
       - "8006:8006"
     environment:
-      DATABASE_URL: "postgresql://algotrade:algotrade_pass@postgres:5432/algotrade"
+      DATABASE_URL: "postgresql+psycopg_async://algotrade:algotrade_pass@postgres:5432/algotrade"
       REDIS_URL: "redis://redis:6379"
       KAFKA_BOOTSTRAP_SERVERS: "kafka:9092"
       S3_ENDPOINT: "${S3_ENDPOINT}"
