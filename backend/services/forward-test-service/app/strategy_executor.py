@@ -310,7 +310,7 @@ class StrategyExecutionService:
         # Publish signal to Kafka for other services
         if self.kafka_producer:
             await self.kafka_producer.send_message(
-                topic=Topics.STRATEGY_SIGNALS,
+                topic=Topics.STRATEGY_SIGNALS.value,
                 message=signal_data,
                 key=str(session_id)
             )
@@ -475,7 +475,7 @@ class StrategyExecutionService:
             # Publish error event to Kafka
             if self.kafka_producer:
                 await self.kafka_producer.send_message(
-                    topic=Topics.FORWARD_TEST_EVENTS,
+                    topic=Topics.FORWARD_TEST_EVENTS.value,
                     message={
                         "event_type": "EXECUTION_ERROR",
                         "session_id": str(session_id),

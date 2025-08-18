@@ -255,7 +255,7 @@ class PerformanceMonitor:
             # Publish performance update
             if self.kafka_producer:
                 await self.kafka_producer.send_message(
-                    topic=Topics.PORTFOLIO_UPDATES,
+                    topic=Topics.PORTFOLIO_UPDATES.value,
                     message={
                         "event_type": "TRADE_RECORDED",
                         "session_id": str(session_id),

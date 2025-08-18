@@ -131,7 +131,7 @@ class SessionEventPublisher:
             # Publish to Kafka for other services
             if self.kafka_producer:
                 await self.kafka_producer.send_message(
-                    topic=Topics.REALTIME_UPDATES,
+                    topic=Topics.REALTIME_UPDATES.value,
                     message={
                         "event_type": event_type,
                         "session_id": str(session_id),

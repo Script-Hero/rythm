@@ -6,10 +6,8 @@ import asyncio
 from typing import Dict, List, Optional, Any
 
 import structlog
-from kafka.admin import KafkaAdminClient, ConfigResource, ConfigResourceType
-from kafka.admin.config_resource import ConfigResource
-from kafka.admin.new_topic import NewTopic
-from kafka.errors import TopicAlreadyExistsError, KafkaError
+from aiokafka.admin import AIOKafkaAdminClient, NewTopic
+from aiokafka.errors import TopicAlreadyExistsError, KafkaError
 
 from .topics import Topics, TOPIC_CONFIGS
 
@@ -21,28 +19,29 @@ class KafkaAdmin:
     
     def __init__(self, bootstrap_servers: str):
         self.bootstrap_servers = bootstrap_servers
-        self.admin_client: Optional[KafkaAdminClient] = None
+        self.admin_client: Optional[AIOKafkaAdminClient] = None
     
-    def connect(self):
+    async def connect(self):
         """Connect to Kafka cluster."""
         try:
-            self.admin_client = KafkaAdminClient(
+            self.admin_client = AIOKafkaAdminClient(
                 bootstrap_servers=self.bootstrap_servers,
                 client_id='algotrade-admin'
             )
+            await self.admin_client.start()
             logger.info("Kafka admin client connected", servers=self.bootstrap_servers)
             
         except Exception as e:
             logger.error("Failed to connect Kafka admin client", error=str(e))
             raise
     
-    def close(self):
+    async def close(self):
         """Close admin client connection."""
         if self.admin_client:
-            self.admin_client.close()
+            await self.admin_client.close()
             logger.info("Kafka admin client closed")
     
-    def create_topics(self, topics: List[Topics] = None) -> bool:
+    async def create_topics(self, topics: List[Topics] = None) -> bool:
         """
         Create Kafka topics if they don't exist.
         
@@ -71,7 +70,7 @@ class KafkaAdmin:
                 replication_factor=config.get('replication_factor', 1)
             )
             
-            # Add topic configuration
+            # Add topic configuration for aiokafka
             topic_configs = {}
             if 'retention_ms' in config:
                 topic_configs['retention.ms'] = str(config['retention_ms'])
@@ -84,30 +83,20 @@ class KafkaAdmin:
             topic_list.append(new_topic)
         
         try:
-            # Create topics
-            futures = self.admin_client.create_topics(topic_list, validate_only=False)
+            # Create topics using aiokafka
+            await self.admin_client.create_topics(topic_list)
+            logger.info("All topics created successfully")
+            return True
             
-            # Wait for creation to complete
-            for topic, future in futures.items():
-                try:
-                    future.result()  # Block until topic is created
-                    logger.info("Topic created successfully", topic=topic)
-                    
-                except TopicAlreadyExistsError:
-                    logger.info("Topic already exists", topic=topic)
-                    
-                except Exception as e:
-                    logger.error("Failed to create topic", topic=topic, error=str(e))
-                    return False
-            
-            logger.info("All topics processed successfully")
+        except TopicAlreadyExistsError:
+            logger.info("Some topics already exist, continuing")
             return True
             
         except Exception as e:
             logger.error("Failed to create topics", error=str(e))
             return False
     
-    def list_topics(self) -> Optional[Dict[str, Any]]:
+    async def list_topics(self) -> Optional[Dict[str, Any]]:
         """
         List all topics in the cluster.
         
@@ -119,19 +108,18 @@ class KafkaAdmin:
             return None
         
         try:
-            metadata = self.admin_client.list_consumer_groups()
-            topic_metadata = self.admin_client.describe_topics()
+            topic_metadata = await self.admin_client.list_topics()
             
             return {
-                "topics": list(topic_metadata.keys()),
-                "topic_count": len(topic_metadata)
+                "topics": list(topic_metadata.topics),
+                "topic_count": len(topic_metadata.topics)
             }
             
         except Exception as e:
             logger.error("Failed to list topics", error=str(e))
             return None
     
-    def delete_topics(self, topics: List[str]) -> bool:
+    async def delete_topics(self, topics: List[str]) -> bool:
         """
         Delete topics from the cluster.
         
@@ -146,95 +134,13 @@ class KafkaAdmin:
             return False
         
         try:
-            futures = self.admin_client.delete_topics(topics, timeout_ms=30000)
-            
-            # Wait for deletion to complete
-            for topic, future in futures.items():
-                try:
-                    future.result()
-                    logger.info("Topic deleted successfully", topic=topic)
-                    
-                except Exception as e:
-                    logger.error("Failed to delete topic", topic=topic, error=str(e))
-                    return False
-            
+            await self.admin_client.delete_topics(topics)
+            logger.info("Topics deleted successfully", topics=topics)
             return True
             
         except Exception as e:
             logger.error("Failed to delete topics", error=str(e))
             return False
-    
-    def describe_topics(self, topics: List[str] = None) -> Optional[Dict[str, Any]]:
-        """
-        Get detailed information about topics.
-        
-        Args:
-            topics: List of topic names. If None, describes all topics.
-            
-        Returns:
-            Dict with topic details or None on error
-        """
-        if not self.admin_client:
-            logger.error("Admin client not connected")
-            return None
-        
-        try:
-            if topics is None:
-                # Get all topics
-                cluster_metadata = self.admin_client._client.cluster
-                topics = list(cluster_metadata.topics())
-            
-            topic_metadata = {}
-            
-            for topic in topics:
-                try:
-                    partitions = self.admin_client._client.cluster.partitions_for_topic(topic)
-                    if partitions:
-                        topic_metadata[topic] = {
-                            "partitions": list(partitions),
-                            "partition_count": len(partitions)
-                        }
-                        
-                except Exception as e:
-                    logger.error("Failed to describe topic", topic=topic, error=str(e))
-            
-            return topic_metadata
-            
-        except Exception as e:
-            logger.error("Failed to describe topics", error=str(e))
-            return None
-    
-    def get_cluster_info(self) -> Optional[Dict[str, Any]]:
-        """
-        Get general cluster information.
-        
-        Returns:
-            Dict with cluster information or None on error
-        """
-        if not self.admin_client:
-            logger.error("Admin client not connected")
-            return None
-        
-        try:
-            cluster = self.admin_client._client.cluster
-            
-            return {
-                "cluster_id": cluster.cluster_id,
-                "controller": cluster.controller.id if cluster.controller else None,
-                "brokers": [
-                    {
-                        "id": broker.nodeId,
-                        "host": broker.host,
-                        "port": broker.port
-                    }
-                    for broker in cluster.brokers()
-                ],
-                "broker_count": len(list(cluster.brokers()))
-            }
-            
-        except Exception as e:
-            logger.error("Failed to get cluster info", error=str(e))
-            return None
     
     async def setup_topics(self) -> bool:
         """
@@ -244,17 +150,17 @@ class KafkaAdmin:
             True if setup successful
         """
         try:
-            self.connect()
+            await self.connect()
             
             # Create all topics
-            success = self.create_topics()
+            success = await self.create_topics()
             
             if success:
                 logger.info("Kafka topics setup completed successfully")
             else:
                 logger.error("Kafka topics setup failed")
             
-            self.close()
+            await self.close()
             return success
             
         except Exception as e:

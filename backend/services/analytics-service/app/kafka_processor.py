@@ -11,19 +11,19 @@ from decimal import Decimal
 
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
+from aiokafka import AIOKafkaConsumer
 
 from .config import settings
 from .database import get_db_session
 from .analytics_engine import AnalyticsEngine
 from .cache_manager import CacheManager
 
-# Import shared Kafka utilities
+# Add shared modules to path
 import sys
 import os
-sys.path.append('/app/shared')
+sys.path.append(os.path.join(os.path.dirname(__file__), '../../..'))
 
-from kafka_client.consumer import KafkaConsumer
-from kafka_client.topics import Topics
+from shared.kafka_client.topics import Topics
 
 logger = structlog.get_logger()
 
@@ -32,45 +32,51 @@ class AnalyticsKafkaProcessor:
     """Kafka event processor for analytics calculations."""
     
     def __init__(self):
-        self.consumer: Optional[KafkaConsumer] = None
+        self.consumer: Optional[AIOKafkaConsumer] = None
         self.analytics_engine = AnalyticsEngine()
         self.cache_manager = CacheManager()
         self._running = False
         
-        # Topics to subscribe to
+        # Topics to subscribe to - use proper enum values
         self.topics = [
-            Topics.TRADE_EXECUTIONS,
-            Topics.PORTFOLIO_UPDATES,
-            Topics.FORWARD_TEST_EVENTS
+            Topics.TRADE_EXECUTIONS.value,
+            Topics.PORTFOLIO_UPDATES.value, 
+            Topics.FORWARD_TEST_EVENTS.value
         ]
     
     async def start(self):
         """Start Kafka consumer and message processing."""
         try:
-            # Initialize consumer
-            self.consumer = KafkaConsumer(
-                topics=self.topics,
+            logger.info("Starting Analytics Kafka processor", topics=self.topics)
+            
+            # Initialize consumer directly with aiokafka
+            self.consumer = AIOKafkaConsumer(
                 bootstrap_servers=settings.KAFKA_BOOTSTRAP_SERVERS,
                 group_id=settings.KAFKA_GROUP_ID,
-                auto_offset_reset="latest"
+                auto_offset_reset="latest",
+                value_deserializer=lambda m: json.loads(m.decode('utf-8')) if m else {},
+                key_deserializer=lambda k: k.decode('utf-8') if k else None
             )
             
-            # Register message handlers
-            self.consumer.add_message_handler(Topics.TRADE_EXECUTIONS, self._handle_trade_execution)
-            self.consumer.add_message_handler(Topics.PORTFOLIO_UPDATES, self._handle_portfolio_update)
-            self.consumer.add_message_handler(Topics.FORWARD_TEST_EVENTS, self._handle_forward_test_event)
-            
-            # Start consumer
+            # Start consumer first
             await self.consumer.start()
+            
+            # Skip topic validation for now since we know topics exist
+            logger.info("Skipping topic validation - topics assumed to exist")
+            
+            # Then subscribe to topics
+            self.consumer.subscribe(self.topics)
             self._running = True
             
-            logger.info("Analytics Kafka processor started", topics=self.topics)
+            logger.info("Analytics Kafka processor started successfully", 
+                       topics=self.topics, group_id=settings.KAFKA_GROUP_ID)
             
             # Start consumption loop
-            await self.consumer.start_consuming()
+            await self._consume_messages()
             
         except Exception as e:
             logger.error("Failed to start Kafka processor", error=str(e))
+            self._running = False
             raise
     
     async def stop(self):
@@ -79,6 +85,68 @@ class AnalyticsKafkaProcessor:
         if self.consumer:
             await self.consumer.stop()
             logger.info("Analytics Kafka processor stopped")
+    
+    async def _consume_messages(self):
+        """Consume messages and route to handlers with robust error handling."""
+        max_retries = 3
+        retry_delay = 5  # seconds
+        
+        for attempt in range(max_retries):
+            try:
+                logger.info("Starting message consumption", attempt=attempt + 1)
+                
+                async for message in self.consumer:
+                    if not self._running:
+                        break
+                    
+                    topic = message.topic
+                    try:
+                        if topic == Topics.TRADE_EXECUTIONS.value:
+                            await self._handle_trade_execution(message.value, message.key)
+                        elif topic == Topics.PORTFOLIO_UPDATES.value:
+                            await self._handle_portfolio_update(message.value, message.key)
+                        elif topic == Topics.FORWARD_TEST_EVENTS.value:
+                            await self._handle_forward_test_event(message.value, message.key)
+                        else:
+                            logger.debug("Unknown topic", topic=topic)
+                            
+                    except Exception as e:
+                        logger.error("Message handler failed", topic=topic, error=str(e), 
+                                   message_key=message.key, message_offset=message.offset)
+                        # Continue processing other messages
+                        continue
+                        
+                # If we get here, consumption completed normally
+                break
+                        
+            except Exception as e:
+                error_type = type(e).__name__
+                logger.error("Message consumption failed", 
+                           error=str(e), error_type=error_type, attempt=attempt + 1)
+                
+                # Check for specific Kafka assignment errors
+                if "AssertionError" in error_type or "assignment" in str(e).lower():
+                    logger.error("Consumer group assignment error detected - likely topic mismatch",
+                               subscribed_topics=self.topics)
+                    # For assignment errors, don't retry - fail fast
+                    raise
+                
+                # For other errors, retry with exponential backoff
+                if attempt < max_retries - 1:
+                    wait_time = retry_delay * (2 ** attempt)
+                    logger.info("Retrying message consumption", 
+                              wait_time=wait_time, remaining_attempts=max_retries - attempt - 1)
+                    await asyncio.sleep(wait_time)
+                    
+                    # Try to restart consumer on retries
+                    try:
+                        await self.stop()
+                        await self.start()
+                    except Exception as restart_error:
+                        logger.error("Failed to restart consumer", error=str(restart_error))
+                else:
+                    logger.error("All retry attempts exhausted")
+                    raise
     
     async def _handle_trade_execution(self, message: Dict[str, Any], key: str):
         """
@@ -309,6 +377,42 @@ class AnalyticsKafkaProcessor:
         
         except Exception as e:
             logger.error("Failed to initialize session analytics", error=str(e))
+    
+    async def _validate_topics_exist(self):
+        """Validate that all required topics exist in Kafka cluster."""
+        try:
+            # Get cluster metadata to check available topics
+            from aiokafka.admin import AIOKafkaAdminClient
+            
+            admin_client = AIOKafkaAdminClient(
+                bootstrap_servers=settings.KAFKA_BOOTSTRAP_SERVERS
+            )
+            await admin_client.start()
+            
+            try:
+                cluster_metadata = await admin_client.list_topics()
+                available_topics = set(cluster_metadata.topics)
+                
+                missing_topics = []
+                for topic in self.topics:
+                    if topic not in available_topics:
+                        missing_topics.append(topic)
+                
+                if missing_topics:
+                    logger.error("Required topics missing from Kafka cluster", 
+                               missing_topics=missing_topics, 
+                               available_topics=list(available_topics))
+                    raise ValueError(f"Missing required topics: {missing_topics}. "
+                                   f"Run 'python setup_kafka.py' to create topics.")
+                
+                logger.info("All required topics validated successfully", topics=self.topics)
+                
+            finally:
+                await admin_client.close()
+            
+        except Exception as e:
+            logger.error("Failed to validate topics", error=str(e))
+            raise
     
     @property
     def is_running(self) -> bool:

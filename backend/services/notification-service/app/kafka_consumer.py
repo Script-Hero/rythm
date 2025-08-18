@@ -13,6 +13,13 @@ from aiokafka.errors import KafkaError
 from .config import settings
 from .connection_manager import ConnectionManager
 
+# Add shared modules to path
+import sys
+import os
+sys.path.append(os.path.join(os.path.dirname(__file__), '../../..'))
+
+from shared.kafka_client.topics import Topics
+
 logger = structlog.get_logger()
 
 
@@ -33,11 +40,11 @@ class NotificationKafkaConsumer:
         """Initialize Kafka consumer."""
         try:
             self.consumer = AIOKafkaConsumer(
-                settings.KAFKA_FORWARD_TEST_EVENTS_TOPIC,
-                settings.KAFKA_PORTFOLIO_UPDATES_TOPIC,
-                settings.KAFKA_TRADE_EXECUTIONS_TOPIC,
-                settings.KAFKA_STRATEGY_SIGNALS_TOPIC,
-                settings.KAFKA_REALTIME_UPDATES_TOPIC,
+                Topics.FORWARD_TEST_EVENTS.value,
+                Topics.PORTFOLIO_UPDATES.value,
+                Topics.TRADE_EXECUTIONS.value,
+                Topics.STRATEGY_SIGNALS.value,
+                Topics.REALTIME_UPDATES.value,
                 bootstrap_servers=settings.KAFKA_BOOTSTRAP_SERVERS,
                 group_id=settings.KAFKA_CONSUMER_GROUP,
                 value_deserializer=lambda m: json.loads(m.decode('utf-8')),
@@ -51,11 +58,11 @@ class NotificationKafkaConsumer:
             
             logger.info("Kafka consumer initialized", 
                        topics=[
-                           settings.KAFKA_FORWARD_TEST_EVENTS_TOPIC,
-                           settings.KAFKA_PORTFOLIO_UPDATES_TOPIC,
-                           settings.KAFKA_TRADE_EXECUTIONS_TOPIC,
-                           settings.KAFKA_STRATEGY_SIGNALS_TOPIC,
-                           settings.KAFKA_REALTIME_UPDATES_TOPIC
+                           Topics.FORWARD_TEST_EVENTS.value,
+                           Topics.PORTFOLIO_UPDATES.value,
+                           Topics.TRADE_EXECUTIONS.value,
+                           Topics.STRATEGY_SIGNALS.value,
+                           Topics.REALTIME_UPDATES.value
                        ])
             
         except Exception as e:
@@ -111,11 +118,11 @@ class NotificationKafkaConsumer:
     def _register_handlers(self):
         """Register message handlers for different topics."""
         self.message_handlers = {
-            settings.KAFKA_FORWARD_TEST_EVENTS_TOPIC: self._handle_forward_test_event,
-            settings.KAFKA_PORTFOLIO_UPDATES_TOPIC: self._handle_portfolio_update,
-            settings.KAFKA_TRADE_EXECUTIONS_TOPIC: self._handle_trade_execution,
-            settings.KAFKA_STRATEGY_SIGNALS_TOPIC: self._handle_strategy_signal,
-            settings.KAFKA_REALTIME_UPDATES_TOPIC: self._handle_realtime_update
+            Topics.FORWARD_TEST_EVENTS.value: self._handle_forward_test_event,
+            Topics.PORTFOLIO_UPDATES.value: self._handle_portfolio_update,
+            Topics.TRADE_EXECUTIONS.value: self._handle_trade_execution,
+            Topics.STRATEGY_SIGNALS.value: self._handle_strategy_signal,
+            Topics.REALTIME_UPDATES.value: self._handle_realtime_update
         }
     
     async def _process_message(self, message):

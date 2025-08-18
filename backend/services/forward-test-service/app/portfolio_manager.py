@@ -697,7 +697,7 @@ class PortfolioManager:
             # Publish to Kafka
             if self.kafka_producer:
                 await self.kafka_producer.send_message(
-                    topic=Topics.TRADE_EXECUTIONS,
+                    topic=Topics.TRADE_EXECUTIONS.value,
                     message={
                         "event_type": "TRADE_EXECUTED",
                         "session_id": str(session_id),
