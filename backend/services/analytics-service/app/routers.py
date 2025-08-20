@@ -259,6 +259,7 @@ async def get_backtest_summary(
         )
 
 
+
 # Helper functions
 
 async def _verify_session_ownership(db: AsyncSession, session_id: str, user_id: UUID):

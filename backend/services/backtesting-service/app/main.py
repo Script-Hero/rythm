@@ -470,17 +470,26 @@ def _get_status_message(status: BacktestStatus) -> str:
 # Health check and monitoring
 @app.get("/health")
 async def health_check():
-    """Health check endpoint with service statistics."""
-    stats = await job_queue.get_queue_stats()
-    
-    return {
-        "status": "healthy",
-        "timestamp": time.time(),
-        "service": "backtesting-service",
-        "queue_stats": stats,
-        "database_connected": await database_service.is_connected(),
-        "historical_data_available": await historical_data_service.is_available()
-    }
+    """Health check endpoint - public access for monitoring."""
+    try:
+        stats = await job_queue.get_queue_stats()
+        
+        return {
+            "status": "healthy",
+            "timestamp": time.time(),
+            "service": "backtesting-service",
+            "queue_stats": stats,
+            "database_connected": await database_service.is_connected(),
+            "historical_data_available": await historical_data_service.is_available()
+        }
+    except Exception as e:
+        logger.error("Health check failed", error=str(e))
+        return {
+            "status": "unhealthy",
+            "timestamp": time.time(),
+            "service": "backtesting-service",
+            "error": str(e)
+        }
 
 
 @app.get("/stats")

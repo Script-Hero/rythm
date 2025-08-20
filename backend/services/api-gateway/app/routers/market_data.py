@@ -125,3 +125,16 @@ async def list_base_currencies():
 async def list_quote_currencies():
     """List available quote currencies."""
     return await proxy_to_market_data_service("GET", "/currencies/quote")
+
+
+@router.post("/validate")
+async def validate_symbol_date_range(request: Request):
+    """Validate symbol and date range for backtesting."""
+    body = await request.json()
+    return await proxy_to_market_data_service("POST", "/validate", body)
+
+
+@router.get("/symbols/{symbol}/date-range")
+async def get_symbol_date_range(symbol: str):
+    """Get available date range for a symbol."""
+    return await proxy_to_market_data_service("GET", f"/symbols/{symbol}/date-range")

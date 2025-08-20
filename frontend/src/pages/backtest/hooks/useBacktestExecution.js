@@ -1,5 +1,6 @@
 import { useState, useCallback } from 'react';
 import { toast } from "sonner";
+import { apiService } from '@/services/api';
 
 export const useBacktestExecution = () => {
   const [loading, setLoading] = useState(false);
@@ -38,19 +39,16 @@ export const useBacktestExecution = () => {
 
       console.log("Backtest request:", requestBody);
 
-      const response = await fetch("http://localhost:8000/api/backtest/run", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(requestBody),
+      // Use ApiService which includes authentication headers
+      const result = await apiService.runBacktest({
+        strategy_id: requestBody.strategy_id,
+        strategy: requestBody.strategy,
+        ticker: requestBody.ticker,
+        fromDate: requestBody.fromDate.toISOString(),
+        toDate: requestBody.toDate.toISOString(),
+        interval: requestBody.interval
       });
-
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-
-      const result = await response.json();
+      
       console.log("Backtest response:", result);
 
       if (result.success) {

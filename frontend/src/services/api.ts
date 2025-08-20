@@ -264,18 +264,30 @@ class ApiService {
     // Auto-authenticate in development mode
     try {
       console.log('🔧 Attempting development authentication...');
-      const response = await fetch(`${API_BASE_URL}/api/auth/dev-login`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({})
-      });
       
-      if (response.ok) {
-        const authData = await response.json();
-        this.setAuthToken(authData.access_token);
-        console.log('✅ Development authentication successful');
-      } else {
-        console.log('❌ Development authentication failed', await response.text());
+      // First try normal login with dev credentials
+      try {
+        console.log('🔄 Trying normal login with dev credentials...');
+        const loginResponse = await this.login('dev_user', 'dev_password');
+        console.log('✅ Development authentication successful with real user');
+        return;
+      } catch (loginError) {
+        console.log('⚠️ Normal dev login failed, trying dev-login endpoint...');
+        
+        // Fallback to dev-login endpoint
+        const response = await fetch(`${API_BASE_URL}/api/auth/dev-login`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({})
+        });
+        
+        if (response.ok) {
+          const authData = await response.json();
+          this.setAuthToken(authData.access_token);
+          console.log('✅ Development authentication successful with fallback');
+        } else {
+          console.log('❌ Development authentication failed', await response.text());
+        }
       }
     } catch (error) {
       console.log('❌ Development authentication error:', error);
@@ -460,7 +472,7 @@ class ApiService {
       interval: data.interval
     });
     
-    return this.request('/api/backtesting/run', {
+    return this.request('/api/backtest/run', {
       method: 'POST',
       body: JSON.stringify({
         strategy_id: data.strategy_id,
@@ -474,7 +486,7 @@ class ApiService {
 
   async getBacktestResult(jobId: string): Promise<any> {
     console.log('📈 Frontend: Getting backtest result', jobId);
-    return this.request(`/api/backtesting/${jobId}`);
+    return this.request(`/api/backtest/${jobId}`);
   }
 
   async listBacktestJobs(params?: { 
@@ -488,19 +500,19 @@ class ApiService {
     if (params?.status) searchParams.append('status_filter', params.status);
     
     const query = searchParams.toString();
-    return this.request(`/api/backtesting/${query ? `?${query}` : ''}`);
+    return this.request(`/api/backtest/${query ? `?${query}` : ''}`);
   }
 
   async cancelBacktest(jobId: string): Promise<any> {
     console.log('❌ Frontend: Cancelling backtest', jobId);
-    return this.request(`/api/backtesting/${jobId}`, {
+    return this.request(`/api/backtest/${jobId}`, {
       method: 'DELETE'
     });
   }
 
   async getBacktestMetrics(jobId: string): Promise<any> {
     console.log('📊 Frontend: Getting backtest metrics', jobId);
-    return this.request(`/api/backtesting/${jobId}/metrics`);
+    return this.request(`/api/backtest/${jobId}/metrics`);
   }
 
   // Forward Testing (Multi-Session Architecture)
@@ -639,30 +651,30 @@ class ApiService {
 
   // Market Data - Enhanced endpoints
   async getLatestPrices(symbol: string, limit: number = 100): Promise<any> {
-    return this.request(`/api/market-data/symbols/${symbol}/latest?limit=${limit}`);
+    return this.request(`/api/market/symbols/${symbol}/latest?limit=${limit}`);
   }
 
   async subscribeToSymbol(symbol: string): Promise<any> {
-    return this.request(`/api/market-data/symbols/${symbol}/subscribe`, {
+    return this.request(`/api/market/symbols/${symbol}/subscribe`, {
       method: 'POST'
     });
   }
 
   async unsubscribeFromSymbol(symbol: string): Promise<any> {
-    return this.request(`/api/market-data/symbols/${symbol}/unsubscribe`, {
+    return this.request(`/api/market/symbols/${symbol}/unsubscribe`, {
       method: 'DELETE'
     });
   }
 
   async validateSymbolAndDates(data: { symbol: string; start_date: string; end_date: string }): Promise<any> {
-    return this.request('/api/market-data/validate', {
+    return this.request('/api/market/validate', {
       method: 'POST',
       body: JSON.stringify(data)
     });
   }
 
   async getSymbolDateRange(symbol: string): Promise<any> {
-    return this.request(`/api/market-data/symbols/${symbol}/date-range`);
+    return this.request(`/api/market/symbols/${symbol}/date-range`);
   }
 
   // Notification Service Integration

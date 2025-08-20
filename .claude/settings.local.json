@@ -8,7 +8,9 @@
       "Bash(docker-compose exec:*)",
       "Bash(docker-compose stop:*)",
       "Bash(docker-compose build:*)",
-      "Bash(docker-compose up:*)"
+      "Bash(docker-compose up:*)",
+      "Bash(docker logs:*)",
+      "Bash(echo:*)"
     ],
     "deny": []
   }

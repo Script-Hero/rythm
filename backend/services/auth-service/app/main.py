@@ -166,7 +166,7 @@ async def login(user_credentials: UserLogin) -> TokenResponse:
 
 @app.post("/dev-login", response_model=TokenResponse)
 async def dev_login(dev_request: Optional[DevAuthRequest] = None) -> TokenResponse:
-    """Development authentication - creates a demo token."""
+    """Development authentication - tries real dev user first, then creates demo token."""
     if not settings.DEV_MODE:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -174,22 +174,40 @@ async def dev_login(dev_request: Optional[DevAuthRequest] = None) -> TokenRespon
         )
     
     try:
-        # Create development user
-        dev_user = auth_service.create_dev_user()
+        # First try to authenticate with the real dev user from database
+        real_dev_user = await auth_service.authenticate_user(settings.DEV_USERNAME, "dev_password")
         
-        # Create access token
-        access_token = auth_service.create_access_token(
-            data={"sub": str(dev_user.id), "dev": True}
-        )
-        
-        logger.info("Development login", user_id=str(dev_user.id))
-        
-        return TokenResponse(
-            access_token=access_token,
-            token_type="bearer",
-            expires_in=settings.JWT_EXPIRE_MINUTES * 60,
-            user=dev_user
-        )
+        if real_dev_user:
+            # Use real dev user from database
+            access_token = auth_service.create_access_token(
+                data={"sub": str(real_dev_user.id)}
+            )
+            
+            logger.info("Development login with real user", user_id=str(real_dev_user.id), username=real_dev_user.username)
+            
+            return TokenResponse(
+                access_token=access_token,
+                token_type="bearer",
+                expires_in=settings.JWT_EXPIRE_MINUTES * 60,
+                user=real_dev_user
+            )
+        else:
+            # Fallback to temporary dev user
+            dev_user = auth_service.create_dev_user()
+            
+            # Create access token with dev flag
+            access_token = auth_service.create_access_token(
+                data={"sub": str(dev_user.id), "dev": True}
+            )
+            
+            logger.info("Development login with temporary user", user_id=str(dev_user.id))
+            
+            return TokenResponse(
+                access_token=access_token,
+                token_type="bearer",
+                expires_in=settings.JWT_EXPIRE_MINUTES * 60,
+                user=dev_user
+            )
         
     except Exception as e:
         logger.error("Development login failed", error=str(e))

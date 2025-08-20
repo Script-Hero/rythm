@@ -27,6 +27,9 @@ class Settings(BaseSettings):
     
     # API Keys
     FINNHUB_TOKEN: str = os.getenv("FINNHUB_TOKEN", "")
+    COINBASE_API_KEY: str = os.getenv("COINBASE_API_KEY", "")
+    COINBASE_API_SECRET: str = os.getenv("COINBASE_API_SECRET", "")
+    COINBASE_PASSPHRASE: str = os.getenv("COINBASE_PASSPHRASE", "")
     
     # Caching
     SYMBOL_CACHE_TTL: int = int(os.getenv("SYMBOL_CACHE_TTL", "3600"))  # 1 hour

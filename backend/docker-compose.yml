@@ -121,6 +121,9 @@ services:
       KAFKA_BOOTSTRAP_SERVERS: "kafka:9092"
       COINBASE_WS_URL: "wss://ws-feed.exchange.coinbase.com"
       FINNHUB_TOKEN: "${FINNHUB_TOKEN}"
+      COINBASE_API_KEY: "${COINBASE_API_KEY}"
+      COINBASE_API_SECRET: "${COINBASE_API_SECRET}"
+      COINBASE_PASSPHRASE: "${COINBASE_PASSPHRASE}"
     depends_on:
       redis:
         condition: service_healthy
@@ -188,6 +191,7 @@ services:
       DATABASE_URL: "postgresql://algotrade:algotrade_pass@postgres:5432/algotrade"
       REDIS_URL: "redis://redis:6379"
       KAFKA_BOOTSTRAP_SERVERS: "kafka:9092"
+      AUTH_SERVICE_URL: "http://auth-service:8007"
       S3_ENDPOINT: "${S3_ENDPOINT}"
       S3_ACCESS_KEY: "${S3_ACCESS_KEY}"
       S3_SECRET_KEY: "${S3_SECRET_KEY}"
@@ -199,6 +203,8 @@ services:
         condition: service_healthy
       kafka:
         condition: service_healthy
+      auth-service:
+        condition: service_started
     networks:
       - algotrade
     volumes:

@@ -34,6 +34,11 @@ export const LoginForm: React.FC<LoginFormProps> = ({ onSuccess }) => {
     }
   };
 
+  const fillDevCredentials = () => {
+    setUsername('dev_user');
+    setPassword('dev_password');
+  };
+
   return (
     <Card className="w-full max-w-md mx-auto">
       <CardHeader className="space-y-1">
@@ -41,6 +46,23 @@ export const LoginForm: React.FC<LoginFormProps> = ({ onSuccess }) => {
         <CardDescription className="text-center">
           Enter your credentials to access AlgoTrade
         </CardDescription>
+        {process.env.NODE_ENV === 'development' && (
+          <div className="bg-blue-50 border border-blue-200 rounded-md p-3 text-sm">
+            <p className="text-blue-800 font-medium mb-2">Development Mode</p>
+            <p className="text-blue-700 mb-2">Use these credentials for testing:</p>
+            <div className="bg-white rounded border px-2 py-1 mb-2 font-mono text-xs">
+              <div><strong>Username:</strong> dev_user</div>
+              <div><strong>Password:</strong> dev_password</div>
+            </div>
+            <button
+              type="button"
+              onClick={fillDevCredentials}
+              className="text-blue-600 hover:text-blue-800 underline text-xs"
+            >
+              Fill dev credentials
+            </button>
+          </div>
+        )}
       </CardHeader>
       <form onSubmit={handleSubmit}>
         <CardContent className="space-y-4">

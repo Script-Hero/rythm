@@ -22,7 +22,7 @@ class Settings:
     ).split(",")
     
     # Authentication
-    JWT_SECRET: str = os.getenv("JWT_SECRET", "your-secret-key")
+    JWT_SECRET: str = os.getenv("JWT_SECRET_KEY", "your-secret-key-change-in-production")
     JWT_ALGORITHM: str = os.getenv("JWT_ALGORITHM", "HS256")
     
     # Backtesting configuration
@@ -40,6 +40,12 @@ class Settings:
     
     # Strategy service
     STRATEGY_SERVICE_URL: str = os.getenv("STRATEGY_SERVICE_URL", "http://strategy-service:8002")
+    
+    # Analytics service
+    ANALYTICS_SERVICE_URL: str = os.getenv("ANALYTICS_SERVICE_URL", "http://analytics-service:8006")
+    
+    # Auth service
+    AUTH_SERVICE_URL: str = os.getenv("AUTH_SERVICE_URL", "http://auth-service:8007")
     
     # Storage configuration (for large result sets)
     S3_BUCKET: str = os.getenv("S3_BUCKET", "algotrade-backtests")

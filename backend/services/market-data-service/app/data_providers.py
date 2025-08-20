@@ -1,15 +1,13 @@
-"""Data providers for market data service."""
+"""Data providers for market data service - focused on Coinbase as primary source."""
 
 import asyncio
 from datetime import datetime, timedelta
-from typing import List, Dict, Any, Optional, Tuple
+from typing import List, Dict, Any, Optional, Set
 from decimal import Decimal
 import hashlib
 import json
 
-import httpx
 import ccxt.async_support as ccxt
-import pandas as pd
 import structlog
 import redis.asyncio as redis
 
@@ -109,52 +107,230 @@ class CoinbaseProvider:
     """Coinbase data provider for cryptocurrency data."""
     
     exchange = None
+    _symbol_cache = None
+    _cache_timestamp = None
+    _cache_ttl = 3600  # Cache symbols for 1 hour
     
     @classmethod
     async def initialize(cls):
         """Initialize Coinbase exchange connection."""
         if cls.exchange is None:
-            cls.exchange = ccxt.coinbasepro({
-                'sandbox': False,
-                'rateLimit': 1000,
-                'enableRateLimit': True,
+            # Try using the legacy Coinbase Pro (now Advanced Trade) public endpoints
+            try:
+                config = {
+                    'sandbox': False,
+                    'rateLimit': 1000,
+                    'enableRateLimit': True,
+                    'urls': {
+                        'api': {
+                            'public': 'https://api.exchange.coinbase.com',  # Use legacy public API
+                        }
+                    }
+                }
+                
+                # Add credentials if available for higher rate limits
+                if hasattr(settings, 'COINBASE_API_KEY') and settings.COINBASE_API_KEY:
+                    config.update({
+                        'apiKey': settings.COINBASE_API_KEY,
+                        'secret': settings.COINBASE_API_SECRET,
+                        'password': settings.COINBASE_PASSPHRASE,
+                    })
+                    logger.info("Coinbase provider initialized with credentials")
+                else:
+                    logger.info("Coinbase provider initialized without credentials - using public API")
+                
+                # Use coinbasepro instead of coinbase for better public API support
+                cls.exchange = ccxt.coinbasepro(config)
+                
+            except Exception as e:
+                logger.error("Failed to initialize Coinbase provider", error=str(e))
+                cls.exchange = None
+    
+    @classmethod
+    async def _fetch_fresh_symbols(cls) -> List[Dict[str, Any]]:
+        """Fetch fresh symbol data from Coinbase API."""
+        # First try using ccxt
+        await cls.initialize()
+        
+        if cls.exchange:
+            try:
+                markets = await cls.exchange.load_markets()
+                symbols = []
+                symbol_id = 1
+                now = datetime.utcnow()
+                
+                for symbol, market in markets.items():
+                    if market['active'] and market['type'] == 'spot':
+                        # Extract base and quote currencies
+                        base = market['base']
+                        quote = market['quote']
+                        
+                        symbols.append({
+                            'id': symbol_id,
+                            'symbol': f"{base}/{quote}",
+                            'base_currency': base,
+                            'quote_currency': quote,
+                            'base_name': base,  # For frontend display
+                            'quote_name': quote,  # For frontend display
+                            'exchange': 'coinbase',
+                            'is_active': True,
+                            'min_order_size': float(market['limits']['amount']['min']) if market['limits']['amount']['min'] else 0.0001,
+                            'price_precision': int(market['precision']['price']) if isinstance(market['precision']['price'], (int, float)) else 8,
+                            'size_precision': int(market['precision']['amount']) if isinstance(market['precision']['amount'], (int, float)) else 8,
+                            'last_price': None,
+                            'last_updated': now,
+                            'created_at': now,
+                            'asset_type': 'crypto'
+                        })
+                        symbol_id += 1
+                
+                # Cache the results
+                cls._symbol_cache = symbols
+                cls._cache_timestamp = now
+                
+                logger.info("Fetched Coinbase symbols via ccxt", count=len(symbols))
+                return symbols
+                
+            except Exception as e:
+                logger.error("Failed to fetch Coinbase symbols via ccxt", error=str(e))
+            finally:
+                if cls.exchange:
+                    await cls.exchange.close()
+                    cls.exchange = None
+        
+        # Fallback to direct HTTP API call
+        try:
+            logger.info("Attempting HTTP fallback to Coinbase API")
+            import httpx
+            async with httpx.AsyncClient() as client:
+                response = await client.get(
+                    "https://api.exchange.coinbase.com/products",
+                    timeout=10.0
+                )
+                
+                if response.status_code == 200:
+                    products = response.json()
+                    symbols = []
+                    symbol_id = 1
+                    now = datetime.utcnow()
+                    
+                    for product in products:
+                        if product.get('status') == 'online' and product.get('type') == 'spot':
+                            base = product.get('base_currency')
+                            quote = product.get('quote_currency')
+                            
+                            if base and quote:
+                                symbols.append({
+                                    'id': symbol_id,
+                                    'symbol': f"{base}/{quote}",
+                                    'base_currency': base,
+                                    'quote_currency': quote,
+                                    'base_name': base,
+                                    'quote_name': quote,
+                                    'exchange': 'coinbase',
+                                    'is_active': True,
+                                    'min_order_size': float(product.get('base_min_size', 0.0001)),
+                                    'price_precision': cls._calculate_precision_from_increment(product.get('quote_increment', '0.01')),
+                                    'size_precision': cls._calculate_precision_from_increment(product.get('base_increment', '0.00000001')),
+                                    'last_price': None,
+                                    'last_updated': now,
+                                    'created_at': now,
+                                    'asset_type': 'crypto'
+                                })
+                                symbol_id += 1
+                    
+                    # Cache the results
+                    cls._symbol_cache = symbols
+                    cls._cache_timestamp = now
+                    
+                    logger.info("Fetched Coinbase symbols via direct HTTP", count=len(symbols))
+                    return symbols
+                
+        except Exception as e:
+            logger.error("Failed to fetch Coinbase symbols via HTTP fallback", error=str(e))
+        
+        # Final fallback to popular crypto pairs
+        logger.warning("Using hardcoded fallback symbols due to API failures")
+        return cls._get_fallback_symbols()
+    
+    @classmethod
+    def _get_fallback_symbols(cls) -> List[Dict[str, Any]]:
+        """Get hardcoded fallback symbols when all APIs fail."""
+        now = datetime.utcnow()
+        
+        popular_pairs = [
+            ("BTC", "USD"), ("ETH", "USD"), ("ADA", "USD"), ("DOT", "USD"),
+            ("SOL", "USD"), ("AVAX", "USD"), ("MATIC", "USD"), ("LINK", "USD"),
+            ("UNI", "USD"), ("AAVE", "USD"), ("COMP", "USD"), ("MKR", "USD"),
+            ("SNX", "USD"), ("CRV", "USD"), ("YFI", "USD"), ("SUSHI", "USD"),
+            ("BTC", "EUR"), ("ETH", "EUR"), ("LTC", "USD"), ("BCH", "USD"),
+            ("XLM", "USD"), ("EOS", "USD"), ("XTZ", "USD"), ("ALGO", "USD")
+        ]
+        
+        symbols = []
+        for i, (base, quote) in enumerate(popular_pairs, 1):
+            symbols.append({
+                'id': i,
+                'symbol': f"{base}/{quote}",
+                'base_currency': base,
+                'quote_currency': quote,
+                'base_name': base,
+                'quote_name': quote,
+                'exchange': 'coinbase',
+                'is_active': True,
+                'min_order_size': 0.0001 if base != 'BTC' else 0.00001,
+                'price_precision': 2,
+                'size_precision': 8,
+                'last_price': None,
+                'last_updated': now,
+                'created_at': now,
+                'asset_type': 'crypto'
             })
+        
+        return symbols
+    
+    @classmethod
+    def _calculate_precision_from_increment(cls, increment_str: str) -> int:
+        """Calculate precision (decimal places) from increment string."""
+        try:
+            # Convert to float first to handle scientific notation
+            increment_float = float(increment_str)
+            
+            # Convert back to string to count decimal places
+            increment_str = f"{increment_float:.10f}".rstrip('0')
+            
+            if '.' in increment_str:
+                return len(increment_str.split('.')[-1])
+            else:
+                return 0
+        except (ValueError, TypeError):
+            # Default to 8 decimal places if parsing fails
+            return 8
     
     @classmethod
     async def get_available_symbols(cls) -> List[Dict[str, Any]]:
-        """Get available trading symbols from Coinbase."""
-        await cls.initialize()
+        """Get available trading symbols from Coinbase with caching."""
+        # Check if cache is still valid
+        if (cls._symbol_cache is not None and 
+            cls._cache_timestamp is not None and
+            (datetime.utcnow() - cls._cache_timestamp).total_seconds() < cls._cache_ttl):
+            logger.debug("Using cached Coinbase symbols", count=len(cls._symbol_cache))
+            return cls._symbol_cache
         
-        try:
-            markets = await cls.exchange.load_markets()
-            symbols = []
-            
-            for symbol, market in markets.items():
-                if market['active'] and market['type'] == 'spot':
-                    symbols.append({
-                        'symbol': symbol,
-                        'base_currency': market['base'],
-                        'quote_currency': market['quote'],
-                        'exchange': 'coinbase',
-                        'is_active': True,
-                        'min_order_size': float(market['limits']['amount']['min']) if market['limits']['amount']['min'] else None,
-                        'price_precision': market['precision']['price'],
-                        'size_precision': market['precision']['amount'],
-                        'last_price': None,
-                        'last_updated': datetime.utcnow(),
-                        'created_at': datetime.utcnow()
-                    })
-            
-            logger.info("Fetched Coinbase symbols", count=len(symbols))
-            return symbols
-            
-        except Exception as e:
-            logger.error("Failed to fetch Coinbase symbols", error=str(e))
-            return []
-        finally:
-            if cls.exchange:
-                await cls.exchange.close()
-                cls.exchange = None
+        # Fetch fresh data
+        return await cls._fetch_fresh_symbols()
+    
+    @classmethod
+    async def get_base_currencies(cls) -> Set[str]:
+        """Get unique base currencies from available symbols."""
+        symbols = await cls.get_available_symbols()
+        return {symbol['base_currency'] for symbol in symbols}
+    
+    @classmethod
+    async def get_quote_currencies(cls) -> Set[str]:
+        """Get unique quote currencies from available symbols."""
+        symbols = await cls.get_available_symbols()
+        return {symbol['quote_currency'] for symbol in symbols}
     
     @classmethod
     async def get_current_price(cls, symbol: str) -> Dict[str, Any]:
@@ -191,11 +367,22 @@ class CoinbaseProvider:
         interval: str = "1h"
     ) -> List[Dict[str, Any]]:
         """Get historical OHLCV data with caching."""
-        # Set default date range if not provided
+        # Set default date range if not provided and ensure timezone consistency
         if not start_date:
-            start_date = datetime.utcnow() - timedelta(days=30)
+            start_date = datetime.utcnow() - timedelta(days=90)  # Default to 90 days
+        else:
+            # Convert timezone-aware datetime to naive UTC
+            if start_date.tzinfo is not None:
+                start_date = start_date.utctimetuple()
+                start_date = datetime(*start_date[:6])
+        
         if not end_date:
             end_date = datetime.utcnow()
+        else:
+            # Convert timezone-aware datetime to naive UTC  
+            if end_date.tzinfo is not None:
+                end_date = end_date.utctimetuple()
+                end_date = datetime(*end_date[:6])
         
         # Check cache first
         cached_data = await HistoricalDataCache.get_cached_data(symbol, start_date, end_date, interval)
@@ -262,166 +449,8 @@ class CoinbaseProvider:
                 cls.exchange = None
 
 
-class FinnhubProvider:
-    """Finnhub data provider for stocks and other assets."""
-    
-    base_url = "https://finnhub.io/api/v1"
-    
-    @classmethod
-    async def get_available_symbols(cls) -> List[Dict[str, Any]]:
-        """Get available stock symbols from Finnhub."""
-        if not settings.FINNHUB_TOKEN:
-            logger.warning("Finnhub token not configured")
-            return []
-        
-        try:
-            async with httpx.AsyncClient() as client:
-                # Get US stocks
-                response = await client.get(
-                    f"{cls.base_url}/stock/symbol",
-                    params={
-                        'exchange': 'US',
-                        'token': settings.FINNHUB_TOKEN
-                    }
-                )
-                response.raise_for_status()
-                
-                stocks = response.json()
-                symbols = []
-                
-                # Limit to major stocks for demo
-                major_stocks = ['AAPL', 'GOOGL', 'MSFT', 'AMZN', 'TSLA', 'NVDA', 'META']
-                
-                for stock in stocks[:100]:  # Limit for demo
-                    if stock['symbol'] in major_stocks:
-                        symbols.append({
-                            'symbol': f"{stock['symbol']}/USD",
-                            'base_currency': stock['symbol'],
-                            'quote_currency': 'USD',
-                            'exchange': 'finnhub',
-                            'is_active': True,
-                            'min_order_size': 1.0,
-                            'price_precision': 2,
-                            'size_precision': 0,
-                            'last_price': None,
-                            'last_updated': datetime.utcnow(),
-                            'created_at': datetime.utcnow()
-                        })
-                
-                logger.info("Fetched Finnhub symbols", count=len(symbols))
-                return symbols
-                
-        except Exception as e:
-            logger.error("Failed to fetch Finnhub symbols", error=str(e))
-            return []
-    
-    @classmethod
-    async def get_current_price(cls, symbol: str) -> Dict[str, Any]:
-        """Get current stock price."""
-        if not settings.FINNHUB_TOKEN:
-            raise Exception("Finnhub token not configured")
-        
-        # Extract stock symbol (remove /USD)
-        stock_symbol = symbol.replace('/USD', '')
-        
-        try:
-            async with httpx.AsyncClient() as client:
-                response = await client.get(
-                    f"{cls.base_url}/quote",
-                    params={
-                        'symbol': stock_symbol,
-                        'token': settings.FINNHUB_TOKEN
-                    }
-                )
-                response.raise_for_status()
-                
-                data = response.json()
-                
-                return {
-                    'symbol': symbol,
-                    'price': Decimal(str(data['c'])),  # Current price
-                    'bid': None,
-                    'ask': None,
-                    'volume': None,
-                    'timestamp': datetime.utcnow(),
-                    'exchange': 'finnhub'
-                }
-                
-        except Exception as e:
-            logger.error("Failed to get Finnhub price", symbol=symbol, error=str(e))
-            raise
-    
-    @classmethod
-    async def get_historical_data(
-        cls,
-        symbol: str,
-        start_date: Optional[datetime] = None,
-        end_date: Optional[datetime] = None,
-        interval: str = "D"
-    ) -> List[Dict[str, Any]]:
-        """Get historical stock data from Finnhub."""
-        if not settings.FINNHUB_TOKEN:
-            raise Exception("Finnhub token not configured")
-        
-        # Extract stock symbol
-        stock_symbol = symbol.replace('/USD', '')
-        
-        # Set default date range
-        if not start_date:
-            start_date = datetime.utcnow() - pd.Timedelta(days=30)
-        if not end_date:
-            end_date = datetime.utcnow()
-        
-        try:
-            async with httpx.AsyncClient() as client:
-                response = await client.get(
-                    f"{cls.base_url}/stock/candle",
-                    params={
-                        'symbol': stock_symbol,
-                        'resolution': interval,
-                        'from': int(start_date.timestamp()),
-                        'to': int(end_date.timestamp()),
-                        'token': settings.FINNHUB_TOKEN
-                    }
-                )
-                response.raise_for_status()
-                
-                data = response.json()
-                
-                if data.get('s') != 'ok':
-                    raise Exception(f"Finnhub API error: {data}")
-                
-                # Convert to our format
-                historical_data = []
-                
-                for i in range(len(data['t'])):
-                    historical_data.append({
-                        'symbol': symbol,
-                        'timestamp': datetime.fromtimestamp(data['t'][i]),
-                        'open': Decimal(str(data['o'][i])),
-                        'high': Decimal(str(data['h'][i])),
-                        'low': Decimal(str(data['l'][i])),
-                        'close': Decimal(str(data['c'][i])),
-                        'volume': Decimal(str(data['v'][i]))
-                    })
-                
-                logger.info("Fetched Finnhub historical data", symbol=symbol, count=len(historical_data))
-                return historical_data
-                
-        except Exception as e:
-            logger.error("Failed to get Finnhub historical data", symbol=symbol, error=str(e))
-            raise
-
-
 class DataProviderManager:
-    """Enhanced manager for coordinating multiple data providers with failover."""
-    
-    # Provider priority order for different asset types
-    PROVIDER_PRIORITY = {
-        'crypto': ['coinbase', 'finnhub'],
-        'stock': ['finnhub', 'coinbase'],
-        'default': ['coinbase', 'finnhub']
-    }
+    """Manager for coordinating data providers - now focused on Coinbase."""
     
     @classmethod
     async def initialize(cls):
@@ -430,138 +459,127 @@ class DataProviderManager:
         logger.info("Data provider manager initialized")
     
     @classmethod
-    async def get_best_provider_for_symbol(cls, symbol: str) -> str:
-        """Determine the best data provider for a symbol."""
-        if '/' in symbol and any(crypto in symbol.upper() for crypto in ['BTC', 'ETH', 'LTC', 'ADA', 'SOL', 'DOT']):
-            return 'coinbase'
-        elif '/USD' in symbol and not any(crypto in symbol.upper() for crypto in ['BTC', 'ETH']):
-            return 'finnhub'
-        else:
-            return 'coinbase'  # Default
+    async def get_current_price(cls, symbol: str) -> Dict[str, Any]:
+        """Get current price using Coinbase."""
+        try:
+            return await CoinbaseProvider.get_current_price(symbol)
+        except Exception as e:
+            logger.error("Failed to get current price", symbol=symbol, error=str(e))
+            raise Exception(f"Failed to get current price for symbol {symbol}: {str(e)}")
     
     @classmethod
-    async def get_current_price_unified(cls, symbol: str) -> Dict[str, Any]:
-        """Get current price using the best provider with failover."""
-        primary_provider = await cls.get_best_provider_for_symbol(symbol)
-        
-        # Try primary provider first
-        try:
-            if primary_provider == 'coinbase':
-                return await CoinbaseProvider.get_current_price(symbol)
-            elif primary_provider == 'finnhub':
-                return await FinnhubProvider.get_current_price(symbol)
-        except Exception as e:
-            logger.warning("Primary provider failed", provider=primary_provider, symbol=symbol, error=str(e))
-        
-        # Fallback to other providers
-        fallback_provider = 'finnhub' if primary_provider == 'coinbase' else 'coinbase'
-        
-        try:
-            if fallback_provider == 'coinbase':
-                result = await CoinbaseProvider.get_current_price(symbol)
-                result['fallback_used'] = True
-                return result
-            elif fallback_provider == 'finnhub':
-                result = await FinnhubProvider.get_current_price(symbol)
-                result['fallback_used'] = True
-                return result
-        except Exception as e:
-            logger.error("Fallback provider also failed", provider=fallback_provider, symbol=symbol, error=str(e))
-        
-        raise Exception(f"All providers failed for symbol {symbol}")
-    
-    @classmethod
-    async def get_historical_data_unified(
+    async def get_historical_data(
         cls,
         symbol: str,
         start_date: Optional[datetime] = None,
         end_date: Optional[datetime] = None,
         interval: str = "1h"
-    ) -> Tuple[List[Dict[str, Any]], str]:
-        """Get historical data with provider failover."""
-        primary_provider = await cls.get_best_provider_for_symbol(symbol)
-        
-        # Try primary provider first
+    ) -> List[Dict[str, Any]]:
+        """Get historical data using Coinbase."""
         try:
-            if primary_provider == 'coinbase':
-                data = await CoinbaseProvider.get_historical_data(symbol, start_date, end_date, interval)
-                return data, 'coinbase'
-            elif primary_provider == 'finnhub':
-                data = await FinnhubProvider.get_historical_data(symbol, start_date, end_date, interval)
-                return data, 'finnhub'
+            # Ensure timezone consistency before calling provider
+            if start_date and start_date.tzinfo is not None:
+                start_date = start_date.utctimetuple()
+                start_date = datetime(*start_date[:6])
+            
+            if end_date and end_date.tzinfo is not None:
+                end_date = end_date.utctimetuple() 
+                end_date = datetime(*end_date[:6])
+                
+            return await CoinbaseProvider.get_historical_data(symbol, start_date, end_date, interval)
         except Exception as e:
-            logger.warning("Primary provider failed for historical data", 
-                         provider=primary_provider, symbol=symbol, error=str(e))
-        
-        # Fallback to other providers
-        fallback_provider = 'finnhub' if primary_provider == 'coinbase' else 'coinbase'
-        
-        try:
-            if fallback_provider == 'coinbase':
-                data = await CoinbaseProvider.get_historical_data(symbol, start_date, end_date, interval)
-                return data, f'{fallback_provider}_fallback'
-            elif fallback_provider == 'finnhub':
-                data = await FinnhubProvider.get_historical_data(symbol, start_date, end_date, interval)
-                return data, f'{fallback_provider}_fallback'
-        except Exception as e:
-            logger.error("Fallback provider also failed for historical data", 
-                        provider=fallback_provider, symbol=symbol, error=str(e))
-        
-        raise Exception(f"All providers failed for historical data: {symbol}")
+            logger.error("Failed to get historical data", symbol=symbol, error=str(e))
+            raise Exception(f"Failed to get historical data for symbol {symbol}: {str(e)}")
     
     @classmethod
-    async def get_all_symbols(cls) -> List[Dict[str, Any]]:
-        """Get symbols from all providers with error handling."""
-        tasks = [
-            cls._safe_get_symbols('coinbase', CoinbaseProvider.get_available_symbols),
-            cls._safe_get_symbols('finnhub', FinnhubProvider.get_available_symbols)
-        ]
-        
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-        
-        all_symbols = []
-        for result in results:
-            if isinstance(result, list):
-                all_symbols.extend(result)
-        
-        logger.info("Retrieved symbols from providers", total_symbols=len(all_symbols))
-        return all_symbols
-    
-    @classmethod
-    async def _safe_get_symbols(cls, provider_name: str, provider_func) -> List[Dict[str, Any]]:
-        """Safely get symbols from a provider."""
+    async def get_available_symbols(cls) -> List[Dict[str, Any]]:
+        """Get symbols from Coinbase."""
         try:
-            symbols = await provider_func()
-            logger.info("Retrieved symbols", provider=provider_name, count=len(symbols))
-            return symbols
+            return await CoinbaseProvider.get_available_symbols()
         except Exception as e:
-            logger.error("Provider failed to get symbols", provider=provider_name, error=str(e))
+            logger.error("Failed to get symbols", error=str(e))
             return []
     
     @classmethod
+    async def get_base_currencies(cls) -> List[Dict[str, str]]:
+        """Get available base currencies for frontend."""
+        try:
+            base_currencies = await CoinbaseProvider.get_base_currencies()
+            return [
+                {'code': currency, 'name': currency}
+                for currency in sorted(base_currencies)
+            ]
+        except Exception as e:
+            logger.error("Failed to get base currencies", error=str(e))
+            return []
+    
+    @classmethod
+    async def get_quote_currencies(cls) -> List[Dict[str, str]]:
+        """Get available quote currencies for frontend."""
+        try:
+            quote_currencies = await CoinbaseProvider.get_quote_currencies()
+            return [
+                {'code': currency, 'name': currency}
+                for currency in sorted(quote_currencies)
+            ]
+        except Exception as e:
+            logger.error("Failed to get quote currencies", error=str(e))
+            return []
+    
+    @classmethod
+    async def filter_symbols_by_history(cls, symbols: List[Dict[str, Any]], min_days: int) -> List[Dict[str, Any]]:
+        """Filter symbols by minimum historical data availability."""
+        if min_days <= 1:
+            return symbols  # Return all if minimal history required
+        
+        # For now, assume all Coinbase symbols have sufficient history
+        # In production, you might want to check actual data availability
+        logger.debug("Filtering symbols by history", min_days=min_days, total_symbols=len(symbols))
+        return symbols
+    
+    @classmethod
+    async def search_symbols(cls, query: str, min_history_days: int = 1) -> List[Dict[str, Any]]:
+        """Search symbols by query string."""
+        all_symbols = await cls.get_available_symbols()
+        
+        if not query.strip():
+            filtered = await cls.filter_symbols_by_history(all_symbols, min_history_days)
+            return filtered
+        
+        query = query.upper().strip()
+        
+        # Search in symbol, base_currency, or quote_currency
+        matching_symbols = []
+        for symbol in all_symbols:
+            if (query in symbol['symbol'].upper() or 
+                query in symbol['base_currency'].upper() or
+                query in symbol['quote_currency'].upper()):
+                matching_symbols.append(symbol)
+        
+        filtered = await cls.filter_symbols_by_history(matching_symbols, min_history_days)
+        logger.debug("Symbol search completed", query=query, results=len(filtered))
+        return filtered
+    
+    @classmethod
     async def health_check(cls) -> Dict[str, Any]:
-        """Check health of all data providers."""
+        """Check health of data providers."""
         health_status = {
             'coinbase': {'status': 'unknown', 'error': None},
-            'finnhub': {'status': 'unknown', 'error': None},
             'cache': {'status': 'unknown', 'error': None}
         }
         
         # Test Coinbase
         try:
-            await CoinbaseProvider.get_available_symbols()
-            health_status['coinbase']['status'] = 'healthy'
+            symbols = await CoinbaseProvider.get_available_symbols()
+            if symbols:
+                health_status['coinbase']['status'] = 'healthy'
+                health_status['coinbase']['symbol_count'] = len(symbols)
+            else:
+                health_status['coinbase']['status'] = 'unhealthy'
+                health_status['coinbase']['error'] = 'No symbols returned'
         except Exception as e:
             health_status['coinbase']['status'] = 'unhealthy'
             health_status['coinbase']['error'] = str(e)
-        
-        # Test Finnhub
-        try:
-            await FinnhubProvider.get_available_symbols()
-            health_status['finnhub']['status'] = 'healthy'
-        except Exception as e:
-            health_status['finnhub']['status'] = 'unhealthy'
-            health_status['finnhub']['error'] = str(e)
         
         # Test Cache
         try:

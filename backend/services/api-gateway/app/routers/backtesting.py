@@ -35,18 +35,23 @@ async def run_backtest(
         # Get request body
         body = await request.json()
         
-        # Add user context
-        body["user_id"] = current_user.id
+        # Add user context (convert UUID to string for JSON serialization)
+        body["user_id"] = str(current_user.id)
         
-        # Proxy to backtesting service
+        # Proxy to backtesting service with authorization header
+        auth_header = request.headers.get("authorization")
+        headers = {
+            "Content-Type": "application/json",
+            "X-User-ID": str(current_user.id)
+        }
+        if auth_header:
+            headers["Authorization"] = auth_header
+            
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.post(
                 f"{BACKTESTING_SERVICE_URL}/run",
                 json=body,
-                headers={
-                    "Content-Type": "application/json",
-                    "X-User-ID": str(current_user.id)
-                }
+                headers=headers
             )
             
             if response.status_code == 200:
@@ -90,14 +95,21 @@ async def run_backtest(
 @router.get("/{backtest_id}")
 async def get_backtest_result(
     backtest_id: str,
+    request: Request,
     current_user = Depends(get_current_user)
 ) -> Dict[str, Any]:
     """Proxy backtest result request to Backtesting Service."""
     try:
+        # Forward authorization header
+        auth_header = request.headers.get("authorization")
+        headers = {"X-User-ID": str(current_user.id)}
+        if auth_header:
+            headers["Authorization"] = auth_header
+            
         async with httpx.AsyncClient(timeout=10.0) as client:
             response = await client.get(
                 f"{BACKTESTING_SERVICE_URL}/{backtest_id}",
-                headers={"X-User-ID": str(current_user.id)}
+                headers=headers
             )
             
             if response.status_code == 200:
@@ -120,14 +132,21 @@ async def get_backtest_result(
 
 @router.get("/")
 async def list_backtests(
+    request: Request,
     current_user = Depends(get_current_user)
 ) -> Dict[str, Any]:
     """Proxy backtest list request to Backtesting Service."""
     try:
+        # Forward authorization header
+        auth_header = request.headers.get("authorization")
+        headers = {"X-User-ID": str(current_user.id)}
+        if auth_header:
+            headers["Authorization"] = auth_header
+            
         async with httpx.AsyncClient(timeout=10.0) as client:
             response = await client.get(
                 f"{BACKTESTING_SERVICE_URL}/",
-                headers={"X-User-ID": str(current_user.id)}
+                headers=headers
             )
             
             if response.status_code == 200:

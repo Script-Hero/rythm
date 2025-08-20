@@ -3,7 +3,7 @@ import { useSearchParams } from "react-router-dom";
 import { getBasicTemplateList } from "../../build_algorithm/basic-templates";
 import { getTemplateList } from "../../build_algorithm/complex-templates";
 import { useBacktestValidation } from "../hooks/useBacktestValidation";
-import { buildBacktestRequest } from "../utils/strategyUtils";
+import { apiService } from '@/services/api';
 
 const BacktestContext = createContext();
 
@@ -46,6 +46,34 @@ export const BacktestProvider = ({ children }) => {
   
   const { validateParams } = useBacktestValidation();
 
+  // Poll backtest job until completion
+  const pollBacktestJob = async (jobId, maxAttempts = 60, intervalMs = 5000) => {
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      try {
+        // Use ApiService with authentication headers
+        const jobStatus = await apiService.getBacktestResult(jobId);
+        console.log(`Backtest job ${jobId} status:`, jobStatus);
+
+        if (jobStatus.status === 'completed') {
+          return jobStatus;
+        } else if (jobStatus.status === 'failed') {
+          throw new Error(jobStatus.error_message || 'Backtest job failed');
+        } else if (jobStatus.status === 'cancelled') {
+          throw new Error('Backtest job was cancelled');
+        }
+
+        // Still running or queued, wait before next poll
+        await new Promise(resolve => setTimeout(resolve, intervalMs));
+        
+      } catch (error) {
+        console.error('Error polling backtest job:', error);
+        throw error;
+      }
+    }
+    
+    throw new Error('Backtest job timed out');
+  };
+
   const runBacktest = useCallback(async (overrideStrategy = null) => {
     setLoading(true);
     setValidationErrors([]);
@@ -72,57 +100,80 @@ export const BacktestProvider = ({ children }) => {
 
       // Use override strategy if provided, otherwise use selectedStrategy
       const strategyToUse = overrideStrategy || selectedStrategy;
-      const typeParam = searchParams.get('type');
       
-      // Build backtest request using utility function
-      const backtestRequestBody = buildBacktestRequest(
-        ticker, fromDate, toDate, barInterval, strategyToUse, 
-        basicTemplates, complexTemplates, typeParam
-      );
+      // Build new job-based backtest request
+      const backtestRequestBody = {
+        strategy_id: strategyToUse, // Assumes UUID format for now
+        symbol: ticker,
+        start_date: new Date(fromDate + "T00:00:00.000Z").toISOString(),
+        end_date: new Date(toDate + "T23:59:59.999Z").toISOString(),
+        interval: barInterval,
+        initial_capital: "100000",
+        commission_rate: "0.001",
+        slippage_rate: "0.0005"
+      };
 
-      console.log(backtestRequestBody);
+      console.log('Submitting backtest job:', backtestRequestBody);
 
-      const response = await fetch("http://localhost:8000/api/backtest/run", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(backtestRequestBody),
+      // Submit backtest job using ApiService with authentication
+      const jobResponse = await apiService.runBacktest({
+        strategy_id: backtestRequestBody.strategy_id,
+        ticker: backtestRequestBody.symbol,
+        fromDate: backtestRequestBody.start_date,
+        toDate: backtestRequestBody.end_date,
+        interval: backtestRequestBody.interval
       });
+      
+      console.log('Backtest job submitted:', jobResponse);
 
-      if (!response.ok) {
-        alert("Request failed");
-        return;
+      if (!jobResponse.success) {
+        throw new Error(jobResponse.message || 'Failed to submit backtest job');
       }
 
-      const response_data = await response.json();
-      console.log(response_data);
+      // Start polling for job completion
+      const jobId = jobResponse.job_id;
+      const result = await pollBacktestJob(jobId);
+      
+      if (result && result.results) {
+        // Process the completed backtest results
+        const { results } = result;
+        
+        setBacktestResults({
+          key_metrics: {
+            win_rate: results.win_rate,
+            total_return: parseFloat(results.total_return_percent),
+            max_drawdown: parseFloat(results.max_drawdown_percent),
+            sharpe_ratio: results.sharpe_ratio,
+            total_trades: results.total_trades
+          },
+          advanced_metrics: {
+            sortino_ratio: results.sortino_ratio,
+            calmar_ratio: results.calmar_ratio,
+            profit_factor: results.profit_factor
+          }
+        });
 
-      const data = JSON.parse(response_data['bar_data']);
+        // Convert chart data format
+        if (results.chart_data && results.chart_data.length > 0) {
+          setChartData(results.chart_data);
+        }
 
-      setBacktestResults(response_data['analytics']);
-
-      setChartData(
-        Object.keys(data.Cash).map((i) => ({
-          Datetime: data.Datetime[i],
-          Cash: data.Cash[i],
-          Close: data.Close[i],
-          High: data.High[i],
-          Low: data.Low[i],
-          Open: data.Open[i],
-          PortfolioValue: data["Portfolio Value"][i],
-          Position: data.Position[i],
-          Volume: data.Volume[i],
-        }))
-      );
-
-      setOVRPercent((response_data['analytics']['key_metrics']['win_rate'] * 100).toFixed(1));
+        setOVRPercent((results.win_rate * 100).toFixed(1));
+        setRanBacktest(true);
+      }
 
     } catch (err) {
-      console.error(err);
+      console.error('Backtest error:', err);
+      setModalState({
+        isOpen: true,
+        title: "Backtest Failed",
+        message: err.message || 'An error occurred while running the backtest',
+        type: 'error'
+      });
     } finally {
       setLoading(false);
-      setRanBacktest(true);
     }
-  }, [selectedStrategy, ticker, fromDate, toDate, barInterval, backtestResults, OVRPercent]);
+  }, [selectedStrategy, ticker, fromDate, toDate, barInterval]);
 
   // Fetch date range for a symbol
   const fetchDateRange = async (symbol) => {
@@ -130,40 +181,30 @@ export const BacktestProvider = ({ children }) => {
     
     setIsLoadingDateRange(true);
     try {
-      // FAKE DATA FOR DEMO - TODO: Replace with real API call
-      console.warn(`🔧 DEMO MODE: Using fake date range data for symbol ${symbol}`);
-      
-      // Simulate API delay
-      await new Promise(resolve => setTimeout(resolve, 500));
-      
-      // Generate fake date range (last 2 years)
-      const endDate = new Date();
-      const startDate = new Date();
-      startDate.setFullYear(endDate.getFullYear() - 2);
-      
-      const dateRange = {
-        available: true,
-        earliest_date: startDate.toISOString().split('T')[0],
-        latest_date: endDate.toISOString().split('T')[0],
-        symbol: symbol,
-        data_points: Math.floor(Math.random() * 1000) + 500, // Random number between 500-1500
-        _fake_data: true
-      };
+      // Use ApiService to get symbol date range with authentication
+      const urlSafeSymbol = symbol.replace('/', '-');
+      const dateRange = await apiService.getSymbolDateRange(urlSafeSymbol);
       
       setSymbolDateRange(dateRange);
       
       // Only set initial dates if they're not already set
       if (dateRange.available && (!fromDate || !toDate)) {
-        // Set default to last 6 months
-        const defaultStart = new Date();
+        // Set default to last 6 months if possible
+        const endDate = new Date(dateRange.latest_date);
+        const defaultStart = new Date(endDate);
         defaultStart.setMonth(defaultStart.getMonth() - 6);
-        setFromDate(defaultStart.toISOString().split('T')[0]);
+        
+        // Ensure start date is not before earliest available date
+        const earliestDate = new Date(dateRange.earliest_date);
+        const startDate = defaultStart < earliestDate ? earliestDate : defaultStart;
+        
+        setFromDate(startDate.toISOString().split('T')[0]);
         setToDate(dateRange.latest_date);
       }
       
     } catch (error) {
       console.error('Failed to fetch date range:', error);
-      setSymbolDateRange({ available: false });
+      setSymbolDateRange({ available: false, error: error.message });
     } finally {
       setIsLoadingDateRange(false);
     }
@@ -182,7 +223,6 @@ export const BacktestProvider = ({ children }) => {
     if (hasInitialized.current) return;
     
     const strategyParam = searchParams.get('strategy');
-    const typeParam = searchParams.get('type');
     const autoRunParam = searchParams.get('autoRun');
     
     if (strategyParam) {
