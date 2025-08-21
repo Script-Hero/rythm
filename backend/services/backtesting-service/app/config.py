@@ -41,6 +41,9 @@ class Settings:
     # Strategy service
     STRATEGY_SERVICE_URL: str = os.getenv("STRATEGY_SERVICE_URL", "http://strategy-service:8002")
     
+    # API Gateway (for authenticated requests)
+    API_GATEWAY_URL: str = os.getenv("API_GATEWAY_URL", "http://api-gateway:8000")
+    
     # Analytics service
     ANALYTICS_SERVICE_URL: str = os.getenv("ANALYTICS_SERVICE_URL", "http://analytics-service:8006")
     

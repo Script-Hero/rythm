@@ -12,7 +12,7 @@ from uuid import UUID
 
 import structlog
 import uvicorn
-from fastapi import FastAPI, HTTPException, status, Depends, BackgroundTasks
+from fastapi import FastAPI, HTTPException, status, Depends, BackgroundTasks, Request
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -101,6 +101,7 @@ app.add_middleware(
 async def run_backtest(
     request: BacktestRequest,
     background_tasks: BackgroundTasks,
+    http_request: Request,
     current_user: User = Depends(get_current_user)
 ) -> BacktestResponse:
     """
@@ -108,10 +109,18 @@ async def run_backtest(
     Returns job ID for tracking progress and retrieving results.
     """
     try:
+        # Extract token from Authorization header
+        auth_header = http_request.headers.get("Authorization")
+        user_token = None
+        if auth_header and auth_header.startswith("Bearer "):
+            user_token = auth_header[7:]  # Remove "Bearer " prefix
+        
         logger.info("Backtest request received", 
                    user_id=current_user.id,
                    symbol=request.symbol,
-                   strategy_id=request.strategy_id)
+                   strategy_id=request.strategy_id,
+                   has_auth_header=bool(auth_header),
+                   token_length=len(user_token) if user_token else 0)
         
         # Validate request parameters
         if not await _validate_backtest_request(request):
@@ -120,8 +129,8 @@ async def run_backtest(
                 detail="Invalid backtest parameters"
             )
         
-        # Get strategy from Strategy Service
-        strategy = await strategy_service.get_compiled_strategy(request.strategy_id)
+        # Get strategy from Strategy Service with user authentication
+        strategy = await strategy_service.get_compiled_strategy(request.strategy_id, user_token)
         if not strategy:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,

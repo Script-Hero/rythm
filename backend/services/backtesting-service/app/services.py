@@ -233,6 +233,7 @@ class DatabaseService:
                 
                 # Create simplified results object
                 analytics = json.loads(row['analytics']) if row['analytics'] else {}
+                logger.info(f"Analytics:{analytics}")
                 results = BacktestResults(
                     total_trades=row['trade_count'] or 0,
                     winning_trades=0,  # Not stored
@@ -404,26 +405,69 @@ class StrategyService:
         """Initialize strategy service."""
         logger.info("Strategy service initialized")
     
-    async def get_compiled_strategy(self, strategy_id: UUID) -> Optional[Dict[str, Any]]:
-        """Get compiled strategy from Strategy Service."""
+    async def get_compiled_strategy(self, strategy_id: UUID, user_token: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        """Get strategy metadata from Strategy Service via API Gateway."""
         try:
-            # Call strategy service
+            # Use API Gateway for proper authentication handling
+            api_gateway_url = settings.API_GATEWAY_URL or "http://api-gateway:8000"
+            
+            logger.info("🔍 Making strategy request to API Gateway", 
+                       strategy_id=str(strategy_id),
+                       api_gateway_url=api_gateway_url,
+                       has_token=bool(user_token),
+                       token_length=len(user_token) if user_token else 0)
+            
+            # Prepare headers with authentication if token is provided
+            headers = {
+                "X-Service-Name": "backtesting-service",
+                "X-Internal-Request": "true"
+            }
+            if user_token:
+                headers["Authorization"] = f"Bearer {user_token}"
+            
             async with httpx.AsyncClient() as client:
                 response = await client.get(
-                    f"{settings.STRATEGY_SERVICE_URL}/strategies/{strategy_id}/compiled",
-                    timeout=10.0
+                    f"{api_gateway_url}/api/strategies/{strategy_id}",
+                    timeout=10.0,
+                    headers=headers
                 )
                 
                 if response.status_code == 200:
-                    return response.json()
+                    data = response.json()
+                    # Extract strategy data from the StandardResponse format
+                    if data.get("success") and data.get("data"):
+                        strategy = data["data"]
+                        logger.info("✅ Retrieved strategy via API Gateway", 
+                                   strategy_id=str(strategy_id),
+                                   strategy_name=strategy.get("name"))
+                        return strategy
+                    else:
+                        logger.warning("⚠️ API Gateway returned success=false", 
+                                     strategy_id=str(strategy_id), 
+                                     response=data)
+                elif response.status_code == 401:
+                    logger.warning("🔐 Authentication required for strategy access", 
+                                 strategy_id=str(strategy_id))
+                else:
+                    logger.warning("⚠️ API Gateway returned non-200 status", 
+                                 strategy_id=str(strategy_id), 
+                                 status_code=response.status_code,
+                                 response_text=response.text[:200])
                 
         except Exception as e:
-            logger.error("Failed to get compiled strategy", error=str(e))
+            logger.error("Failed to get strategy via API Gateway", 
+                        strategy_id=str(strategy_id), 
+                        error=str(e))
         
-        # Return mock strategy for development
+        # Return mock strategy for development (only as fallback)
+        auth_status = "with auth" if user_token else "without auth"
+        logger.warning("⚠️ Falling back to mock strategy", 
+                      strategy_id=str(strategy_id),
+                      auth_status=auth_status)
         return {
             "id": str(strategy_id),
-            "name": "Mock Strategy",
+            "name": f"Mock Strategy ({auth_status.title()})",
+            "description": f"Fallback strategy used when real strategy cannot be retrieved ({auth_status})",
             "compiled": True,
             "nodes": [],
             "execution_order": []
@@ -498,23 +542,44 @@ class BacktestEngine:
         import sys
         import os
         sys.path.append(os.path.join(os.path.dirname(__file__), '../../..'))
+
+        # logger.warning(f"Job is {job} and data is {data}")
         
         try:
-            from shared.strategy_engine.compiler import StrategyCompiler
-            from shared.strategy_engine.nodes import NODE_REGISTRY
+            # from shared.strategy_engine.compiler import StrategyCompiler
+            # from shared.strategy_engine.nodes import NODE_REGISTRY
             
             # Create compiled strategy from job.strategy
             strategy_data = job.strategy
-            if strategy_data and strategy_data.get("nodes") and strategy_data.get("execution_order"):
-                # We have a compiled strategy, create executor
-                strategy_executor = self._create_strategy_executor(strategy_data)
-                logger.info("Using compiled strategy for backtest", 
-                           node_count=len(strategy_data.get("nodes", [])),
-                           execution_order=strategy_data.get("execution_order", []))
+            logger.warning(f"Strategy data : {strategy_data}")
+            
+            # Extract nodes and execution order from the correct locations
+            json_tree = strategy_data.get("json_tree", {}) if strategy_data else {}
+            compilation_report = strategy_data.get("compilation_report", {}) if strategy_data else {}
+            nodes = json_tree.get("nodes", [])
+            edges = json_tree.get("edges", [])
+            execution_order = compilation_report.get("execution_order", [])
+            
+            if strategy_data and nodes and execution_order:
+                # Create strategy executor with proper data format
+                executor_data = {
+                    "nodes": nodes,
+                    "edges": edges,
+                    "execution_order": execution_order,
+                    "execution_graph": {}  # TODO: Build execution graph if needed
+                }
+                strategy_executor = self._create_strategy_executor(executor_data)
+                logger.warning("✅ Using compiled strategy for backtest", 
+                           node_count=len(nodes),
+                           edge_count=len(edges),
+                           execution_order=execution_order)
             else:
                 # Fall back to simple buy-and-hold strategy
                 strategy_executor = None
-                logger.warning("No valid compiled strategy found, using simple buy-and-hold")
+                logger.warning("❌ No valid compiled strategy found, using simple buy-and-hold",
+                             has_strategy_data=bool(strategy_data),
+                             has_nodes=bool(nodes),
+                             has_execution_order=bool(execution_order))
                 
         except Exception as e:
             logger.error("Failed to initialize strategy engine, using fallback", error=str(e))

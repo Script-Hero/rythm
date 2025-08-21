@@ -183,3 +183,25 @@ async def duplicate_strategy(
     return await proxy_to_strategy_service("POST", f"/{strategy_id}/duplicate", current_user, body=body, auth_header=auth_header)
 
 
+@router.get("/{strategy_id}/compiled")
+async def get_compiled_strategy(
+    strategy_id: str,
+    request: Request,
+    current_user = Depends(get_current_user)
+):
+    """Get compiled strategy binary."""
+    auth_header = request.headers.get("authorization")
+    return await proxy_to_strategy_service("GET", f"/{strategy_id}/compiled", current_user, auth_header=auth_header)
+
+
+@router.post("/{strategy_id}/compile")
+async def compile_strategy(
+    strategy_id: str,
+    request: Request,
+    current_user = Depends(get_current_user)
+):
+    """Compile and validate a strategy."""
+    auth_header = request.headers.get("authorization")
+    return await proxy_to_strategy_service("POST", f"/{strategy_id}/compile", current_user, auth_header=auth_header)
+
+
