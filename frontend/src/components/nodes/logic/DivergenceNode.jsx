@@ -2,10 +2,25 @@ import { useState, memo } from 'react';
 import { Handle, Position } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 
-function DivergenceNode({ data, id }) {
+function DivergenceNode({ data, id, updateNodeData }) {
   const [lookbackPeriod, setLookbackPeriod] = useState(data.lookbackPeriod || 20);
   const [divergenceType, setDivergenceType] = useState(data.divergenceType || 'regular');
   const [sensitivity, setSensitivity] = useState(data.sensitivity || 0.5);
+
+  const handleLookbackPeriodChange = (value) => {
+    setLookbackPeriod(value);
+    updateNodeData(id, { lookbackPeriod: value });
+  };
+
+  const handleDivergenceTypeChange = (value) => {
+    setDivergenceType(value);
+    updateNodeData(id, { divergenceType: value });
+  };
+
+  const handleSensitivityChange = (value) => {
+    setSensitivity(value);
+    updateNodeData(id, { sensitivity: value });
+  };
 
   return (
     <div className="bg-yellow-100 border-2 border-yellow-300 rounded-lg p-3 min-w-36">
@@ -18,7 +33,7 @@ function DivergenceNode({ data, id }) {
           <input
             type="number"
             value={lookbackPeriod}
-            onChange={(e) => setLookbackPeriod(parseInt(e.target.value))}
+            onChange={(e) => handleLookbackPeriodChange(parseInt(e.target.value))}
             className="w-full px-2 py-1 text-xs border rounded"
             min="5"
             max="100"
@@ -29,7 +44,7 @@ function DivergenceNode({ data, id }) {
           <label className="text-xs text-gray-600 block">Type</label>
           <select
             value={divergenceType}
-            onChange={(e) => setDivergenceType(e.target.value)}
+            onChange={(e) => handleDivergenceTypeChange(e.target.value)}
             className="w-full px-2 py-1 text-xs border rounded"
           >
             <option value="regular">Regular</option>
@@ -46,7 +61,7 @@ function DivergenceNode({ data, id }) {
             max="1"
             step="0.1"
             value={sensitivity}
-            onChange={(e) => setSensitivity(parseFloat(e.target.value))}
+            onChange={(e) => handleSensitivityChange(parseFloat(e.target.value))}
             className="w-full"
           />
           <span className="text-xs text-gray-500">{sensitivity}</span>

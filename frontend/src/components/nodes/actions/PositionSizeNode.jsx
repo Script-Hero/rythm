@@ -2,12 +2,37 @@ import { useState, memo } from 'react';
 import { Handle, Position } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 
-function PositionSizeNode({ data, id }) {
+function PositionSizeNode({ data, id, updateNodeData }) {
   const [sizingMethod, setSizingMethod] = useState(data.sizingMethod || 'fixed_percent');
   const [riskPercent, setRiskPercent] = useState(data.riskPercent || 2);
   const [maxPosition, setMaxPosition] = useState(data.maxPosition || 10000);
   const [kellyEnabled, setKellyEnabled] = useState(data.kellyEnabled || false);
   const [kellyFraction, setKellyFraction] = useState(data.kellyFraction || 0.25);
+
+  const handleSizingMethodChange = (value) => {
+    setSizingMethod(value);
+    updateNodeData?.(id, { sizingMethod: value });
+  };
+
+  const handleRiskPercentChange = (value) => {
+    setRiskPercent(value);
+    updateNodeData?.(id, { riskPercent: value });
+  };
+
+  const handleMaxPositionChange = (value) => {
+    setMaxPosition(value);
+    updateNodeData?.(id, { maxPosition: value });
+  };
+
+  const handleKellyEnabledChange = (value) => {
+    setKellyEnabled(value);
+    updateNodeData?.(id, { kellyEnabled: value });
+  };
+
+  const handleKellyFractionChange = (value) => {
+    setKellyFraction(value);
+    updateNodeData?.(id, { kellyFraction: value });
+  };
 
   return (
     <div className="bg-purple-100 border-2 border-purple-300 rounded-lg p-3 min-w-36">
@@ -18,7 +43,7 @@ function PositionSizeNode({ data, id }) {
           <label className="text-xs text-gray-600 block">Method</label>
           <select
             value={sizingMethod}
-            onChange={(e) => setSizingMethod(e.target.value)}
+            onChange={(e) => handleSizingMethodChange(e.target.value)}
             className="w-full px-2 py-1 text-xs border rounded"
           >
             <option value="fixed_percent">Fixed % Risk</option>
@@ -35,7 +60,7 @@ function PositionSizeNode({ data, id }) {
           <input
             type="number"
             value={riskPercent}
-            onChange={(e) => setRiskPercent(parseFloat(e.target.value))}
+            onChange={(e) => handleRiskPercentChange(parseFloat(e.target.value))}
             className="w-full px-2 py-1 text-xs border rounded"
             step="0.1"
             min="0.1"
@@ -48,7 +73,7 @@ function PositionSizeNode({ data, id }) {
           <input
             type="number"
             value={maxPosition}
-            onChange={(e) => setMaxPosition(parseFloat(e.target.value))}
+            onChange={(e) => handleMaxPositionChange(parseFloat(e.target.value))}
             className="w-full px-2 py-1 text-xs border rounded"
             min="100"
           />
@@ -60,7 +85,7 @@ function PositionSizeNode({ data, id }) {
               <input
                 type="checkbox"
                 checked={kellyEnabled}
-                onChange={(e) => setKellyEnabled(e.target.checked)}
+                onChange={(e) => handleKellyEnabledChange(e.target.checked)}
                 className="w-3 h-3"
               />
               <label className="text-xs text-gray-600">Enable Kelly</label>
@@ -74,7 +99,7 @@ function PositionSizeNode({ data, id }) {
                 max="1"
                 step="0.05"
                 value={kellyFraction}
-                onChange={(e) => setKellyFraction(parseFloat(e.target.value))}
+                onChange={(e) => handleKellyFractionChange(parseFloat(e.target.value))}
                 className="w-full"
               />
               <span className="text-xs text-gray-500">{kellyFraction}</span>

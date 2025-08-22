@@ -115,7 +115,7 @@ async def run_backtest(
         if auth_header and auth_header.startswith("Bearer "):
             user_token = auth_header[7:]  # Remove "Bearer " prefix
         
-        logger.info("Backtest request received", 
+        logger.warning("🚀 BACKTEST REQUEST RECEIVED", 
                    user_id=current_user.id,
                    symbol=request.symbol,
                    strategy_id=request.strategy_id,

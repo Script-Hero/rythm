@@ -1,10 +1,25 @@
 import { useState, memo } from 'react';
 import { Handle, Position } from '@xyflow/react';
 
-function HoldNode({ data, id }) {
+function HoldNode({ data, id, updateNodeData }) {
   const [holdType, setHoldType] = useState(data.holdType || 'indefinite');
   const [duration, setDuration] = useState(data.duration || 1);
   const [unit, setUnit] = useState(data.unit || 'days');
+
+  const handleHoldTypeChange = (value) => {
+    setHoldType(value);
+    updateNodeData(id, { holdType: value });
+  };
+
+  const handleDurationChange = (value) => {
+    setDuration(value);
+    updateNodeData(id, { duration: value });
+  };
+
+  const handleUnitChange = (value) => {
+    setUnit(value);
+    updateNodeData(id, { unit: value });
+  };
 
   return (
     <div className="bg-gray-100 border-2 border-gray-300 rounded-lg p-3 min-w-36">
@@ -15,7 +30,7 @@ function HoldNode({ data, id }) {
           <label className="text-xs text-gray-600 block">Hold Type</label>
           <select
             value={holdType}
-            onChange={(e) => setHoldType(e.target.value)}
+            onChange={(e) => handleHoldTypeChange(e.target.value)}
             className="w-full px-2 py-1 text-xs border rounded"
           >
             <option value="indefinite">Hold Indefinitely</option>
@@ -31,7 +46,7 @@ function HoldNode({ data, id }) {
               <input
                 type="number"
                 value={duration}
-                onChange={(e) => setDuration(parseInt(e.target.value))}
+                onChange={(e) => handleDurationChange(parseInt(e.target.value))}
                 className="w-full px-2 py-1 text-xs border rounded"
                 min="1"
               />
@@ -41,7 +56,7 @@ function HoldNode({ data, id }) {
               <label className="text-xs text-gray-600 block">Unit</label>
               <select
                 value={unit}
-                onChange={(e) => setUnit(e.target.value)}
+                onChange={(e) => handleUnitChange(e.target.value)}
                 className="w-full px-2 py-1 text-xs border rounded"
               >
                 <option value="minutes">Minutes</option>

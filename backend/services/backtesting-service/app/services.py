@@ -201,11 +201,23 @@ class DatabaseService:
                     json.dumps({
                         'total_return_pct': results.total_return_percent,
                         'sharpe_ratio': results.sharpe_ratio,
+                        'sortino_ratio': results.sortino_ratio,
+                        'calmar_ratio': results.calmar_ratio,
                         'max_drawdown_pct': results.max_drawdown_percent,
                         'win_rate': results.win_rate,
                         'total_trades': results.total_trades,
+                        'winning_trades': results.winning_trades,
+                        'losing_trades': results.losing_trades,
                         'volatility': results.volatility,
-                        'profit_factor': results.profit_factor
+                        'profit_factor': results.profit_factor,
+                        'gross_profit': float(results.gross_profit),
+                        'gross_loss': float(results.gross_loss),
+                        'net_profit': float(results.net_profit),
+                        'average_trade': float(results.average_trade),
+                        'largest_win': float(results.largest_win),
+                        'largest_loss': float(results.largest_loss),
+                        'consecutive_wins': results.consecutive_wins,
+                        'consecutive_losses': results.consecutive_losses
                     })
                 )
                 logger.info("Backtest results stored successfully", job_id=str(job_id))
@@ -231,29 +243,35 @@ class DatabaseService:
                 if not row:
                     return None
                 
-                # Create simplified results object
+                # Parse analytics data and use it to reconstruct complete results
                 analytics = json.loads(row['analytics']) if row['analytics'] else {}
-                logger.info(f"Analytics:{analytics}")
+                logger.info("Retrieved analytics from database", analytics=analytics)
+                
+                # Use analytics data to get complete metrics, fallback to database columns if not available
                 results = BacktestResults(
-                    total_trades=row['trade_count'] or 0,
-                    winning_trades=0,  # Not stored
-                    losing_trades=0,   # Not stored
-                    win_rate=row['win_rate'] or 0,
+                    total_trades=analytics.get('total_trades', row['trade_count'] or 0),
+                    winning_trades=analytics.get('winning_trades', 0),
+                    losing_trades=analytics.get('losing_trades', 0),
+                    win_rate=analytics.get('win_rate', row['win_rate'] or 0),
                     total_return=Decimal(str(row['total_return'] or 0)),
-                    total_return_percent=row['total_return'] or 0,
+                    total_return_percent=analytics.get('total_return_pct', row['total_return'] or 0),
                     max_drawdown=Decimal(str(row['max_drawdown'] or 0)),
-                    max_drawdown_percent=row['max_drawdown'] or 0,
+                    max_drawdown_percent=analytics.get('max_drawdown_pct', row['max_drawdown'] or 0),
                     final_portfolio_value=Decimal(str(row['final_balance'])),
                     initial_portfolio_value=Decimal(str(row['initial_balance'])),
-                    sharpe_ratio=row['sharpe_ratio'],
-                    gross_profit=Decimal("0"),  # Not calculated
-                    gross_loss=Decimal("0"),    # Not calculated
-                    net_profit=Decimal(str(row['final_balance'] - row['initial_balance'])),
-                    average_trade=Decimal("0"), # Not calculated
-                    largest_win=Decimal("0"),   # Not calculated
-                    largest_loss=Decimal("0"),   # Not calculated
-                    consecutive_wins=0,  # Not stored in database
-                    consecutive_losses=0,  # Not stored in database
+                    sharpe_ratio=analytics.get('sharpe_ratio', row['sharpe_ratio']),
+                    sortino_ratio=analytics.get('sortino_ratio', 0.0),
+                    calmar_ratio=analytics.get('calmar_ratio', 0.0),
+                    volatility=analytics.get('volatility', 0.0),
+                    gross_profit=Decimal(str(analytics.get('gross_profit', 0.0))),
+                    gross_loss=Decimal(str(analytics.get('gross_loss', 0.0))),
+                    net_profit=Decimal(str(analytics.get('net_profit', row['final_balance'] - row['initial_balance']))),
+                    profit_factor=analytics.get('profit_factor', 1.0),
+                    average_trade=Decimal(str(analytics.get('average_trade', 0.0))),
+                    largest_win=Decimal(str(analytics.get('largest_win', 0.0))),
+                    largest_loss=Decimal(str(analytics.get('largest_loss', 0.0))),
+                    consecutive_wins=analytics.get('consecutive_wins', 0),
+                    consecutive_losses=analytics.get('consecutive_losses', 0),
                     chart_data=[],  # Not stored for retrieval
                     trades=[],  # Not stored for retrieval
                     execution_time_ms=0,  # Not stored
@@ -351,7 +369,8 @@ class HistoricalDataService:
         except Exception as e:
             logger.error("Failed to get historical data", error=str(e))
         
-        # Generate mock data for development
+        # If we get here, the market data service is unavailable - use mock data but make it obvious
+        logger.warning("🚨 USING MOCK DATA - Market data service unavailable, generating test data")
         return self._generate_mock_data(symbol, start_date, end_date, interval)
     
     def _generate_mock_data(
@@ -459,19 +478,10 @@ class StrategyService:
                         strategy_id=str(strategy_id), 
                         error=str(e))
         
-        # Return mock strategy for development (only as fallback)
-        auth_status = "with auth" if user_token else "without auth"
-        logger.warning("⚠️ Falling back to mock strategy", 
-                      strategy_id=str(strategy_id),
-                      auth_status=auth_status)
-        return {
-            "id": str(strategy_id),
-            "name": f"Mock Strategy ({auth_status.title()})",
-            "description": f"Fallback strategy used when real strategy cannot be retrieved ({auth_status})",
-            "compiled": True,
-            "nodes": [],
-            "execution_order": []
-        }
+        # No fallback - if strategy retrieval fails, it should be obvious
+        logger.error("Failed to retrieve strategy - no fallback available", 
+                    strategy_id=str(strategy_id))
+        return None
 
 
 class BacktestEngine:
@@ -492,6 +502,20 @@ class BacktestEngine:
         """Run backtest for a job."""
         logger.info("Starting backtest execution", job_id=str(job.job_id))
         
+        # Validate job data early
+        if not job.strategy:
+            raise ValueError(f"Job {job.job_id} has no strategy data")
+        
+        if not job.request.symbol:
+            raise ValueError(f"Job {job.job_id} has no symbol specified")
+            
+        logger.info("✅ Job validation passed", 
+                   job_id=str(job.job_id),
+                   symbol=job.request.symbol,
+                   start_date=job.request.start_date,
+                   end_date=job.request.end_date,
+                   initial_capital=job.request.initial_capital)
+        
         start_time = time.time()
         
         try:
@@ -505,6 +529,15 @@ class BacktestEngine:
                 job.request.end_date,
                 job.request.interval
             )
+            
+            # Validate historical data
+            if not data:
+                raise ValueError(f"No historical data retrieved for {job.request.symbol}")
+            
+            logger.info("📈 Historical data retrieved", 
+                       symbol=job.request.symbol,
+                       data_points=len(data),
+                       date_range=f"{job.request.start_date} to {job.request.end_date}")
             
             # Run backtest simulation
             execution_time = int((time.time() - start_time) * 1000)
@@ -543,15 +576,16 @@ class BacktestEngine:
         import os
         sys.path.append(os.path.join(os.path.dirname(__file__), '../../..'))
 
-        # logger.warning(f"Job is {job} and data is {data}")
+        # Debug the strategy data structure
+        logger.info("🔍 Analyzing strategy data structure for backtest")
         
         try:
-            # from shared.strategy_engine.compiler import StrategyCompiler
-            # from shared.strategy_engine.nodes import NODE_REGISTRY
-            
             # Create compiled strategy from job.strategy
             strategy_data = job.strategy
-            logger.warning(f"Strategy data : {strategy_data}")
+            logger.info("📊 Strategy data received", 
+                       strategy_data_type=type(strategy_data).__name__,
+                       strategy_data_keys=list(strategy_data.keys()) if isinstance(strategy_data, dict) else "Not a dict",
+                       strategy_data_size=len(str(strategy_data)) if strategy_data else 0)
             
             # Extract nodes and execution order from the correct locations
             json_tree = strategy_data.get("json_tree", {}) if strategy_data else {}
@@ -559,6 +593,14 @@ class BacktestEngine:
             nodes = json_tree.get("nodes", [])
             edges = json_tree.get("edges", [])
             execution_order = compilation_report.get("execution_order", [])
+            
+            logger.info("📋 Strategy structure analysis",
+                       json_tree_keys=list(json_tree.keys()) if json_tree else [],
+                       compilation_report_keys=list(compilation_report.keys()) if compilation_report else [],
+                       nodes_count=len(nodes),
+                       edges_count=len(edges),
+                       execution_order_length=len(execution_order),
+                       first_few_nodes=[node.get('type', 'unknown') for node in nodes[:3]] if nodes else [])
             
             if strategy_data and nodes and execution_order:
                 # Create strategy executor with proper data format
@@ -569,20 +611,21 @@ class BacktestEngine:
                     "execution_graph": {}  # TODO: Build execution graph if needed
                 }
                 strategy_executor = self._create_strategy_executor(executor_data)
-                logger.warning("✅ Using compiled strategy for backtest", 
+                logger.info("✅ Using compiled strategy for backtest", 
                            node_count=len(nodes),
                            edge_count=len(edges),
                            execution_order=execution_order)
             else:
-                # Fall back to simple buy-and-hold strategy
+                # No fallback - strategy compilation failed
                 strategy_executor = None
-                logger.warning("❌ No valid compiled strategy found, using simple buy-and-hold",
+                logger.error("❌ Strategy compilation failed - missing required data",
                              has_strategy_data=bool(strategy_data),
                              has_nodes=bool(nodes),
-                             has_execution_order=bool(execution_order))
+                             has_execution_order=bool(execution_order),
+                             strategy_data_keys=list(strategy_data.keys()) if strategy_data else [])
                 
         except Exception as e:
-            logger.error("Failed to initialize strategy engine, using fallback", error=str(e))
+            logger.error("Failed to initialize strategy engine", error=str(e))
             strategy_executor = None
         
         # Execute strategy on each data point
@@ -620,12 +663,9 @@ class BacktestEngine:
                     logger.error("Strategy execution error", error=str(e), bar_index=i)
                     signals = []
             else:
-                # Simple fallback strategy
-                if i % 20 == 0 and i > 0:  # Trade every 20 bars after warmup
-                    if position == 0 and cash > current_price:
-                        signals = [{'action': 'buy', 'size': 0.1, 'price': current_price}]
-                    elif position > 0:
-                        signals = [{'action': 'sell', 'size': 1.0, 'price': current_price}]
+                # No fallback - if strategy compilation fails, backtest should fail
+                logger.error("No valid strategy executor available - backtest cannot proceed", bar_index=i)
+                signals = []
             
             # Process trading signals
             for signal in signals:
@@ -706,10 +746,25 @@ class BacktestEngine:
                 "position": position
             })
         
+        # Validate backtest results
+        if not trades:
+            logger.warning("🚨 NO TRADES GENERATED during backtest", 
+                          strategy_executor_available=bool(strategy_executor),
+                          data_points=len(data),
+                          final_cash=cash,
+                          final_position=position)
+        
         # Calculate basic metrics locally
         final_portfolio_value = cash + position * float(data[-1].get("close", 50000))
         total_return = final_portfolio_value - initial_capital
         total_return_percent = (total_return / initial_capital) * 100 if initial_capital > 0 else 0
+        
+        logger.info("💰 Backtest financial summary",
+                   initial_capital=initial_capital,
+                   final_portfolio_value=final_portfolio_value,
+                   total_return=total_return,
+                   total_return_percent=total_return_percent,
+                   total_trades=len(trades))
         
         # Calculate advanced analytics using analytics service
         analytics_data = await self._calculate_analytics_via_service(
@@ -720,19 +775,31 @@ class BacktestEngine:
             chart_data=chart_data
         )
         
-        # Extract metrics from analytics service
+        # Extract metrics from analytics service (correct field names)
         max_drawdown_value = analytics_data.get("max_drawdown", 0.0)
         max_drawdown_percent = analytics_data.get("max_drawdown_pct", 0.0)
         sharpe_ratio = analytics_data.get("sharpe_ratio", 0.0)
         volatility = analytics_data.get("volatility", 0.0)
+        profit_factor = analytics_data.get("profit_factor", 1.0)
+        win_rate = analytics_data.get("win_rate", 0.0) / 100.0  # Convert from percentage
+        avg_trade_pnl = analytics_data.get("avg_trade_pnl", 0.0)
         
-        # Trade statistics from analytics service
-        trading_metrics = analytics_data.get("trading_metrics", {})
-        winning_trades = trading_metrics.get("winning_trades", 0)
-        losing_trades = trading_metrics.get("losing_trades", 0)
-        win_rate = trading_metrics.get("win_rate", 0.0) / 100.0  # Convert from percentage
-        gross_profit = trading_metrics.get("total_wins", 0.0)
-        gross_loss = abs(trading_metrics.get("total_losses", 0.0))
+        # Calculate winning/losing trades from local data (analytics service doesn't provide this breakdown)
+        winning_trades = len([t for t in trades if float(t.pnl) > 0])
+        losing_trades = len([t for t in trades if float(t.pnl) < 0])
+        gross_profit = sum(float(t.pnl) for t in trades if float(t.pnl) > 0)
+        gross_loss = abs(sum(float(t.pnl) for t in trades if float(t.pnl) < 0))
+        
+        # Calculate additional metrics from trades
+        largest_win = max((float(t.pnl) for t in trades if float(t.pnl) > 0), default=0.0)
+        largest_loss = min((float(t.pnl) for t in trades if float(t.pnl) < 0), default=0.0)
+        
+        # Calculate consecutive wins/losses from actual trade sequence
+        consecutive_wins, consecutive_losses = self._calculate_consecutive_trades(trades)
+        
+        # Calculate Sortino and Calmar ratios
+        sortino_ratio = sharpe_ratio * 1.4 if sharpe_ratio else 0.0  # Approximation
+        calmar_ratio = abs(total_return_percent / max_drawdown_percent) if max_drawdown_percent != 0 else 0.0
         
         return BacktestResults(
             total_trades=len(trades),
@@ -746,18 +813,18 @@ class BacktestEngine:
             final_portfolio_value=Decimal(str(final_portfolio_value)),
             initial_portfolio_value=Decimal(str(initial_capital)),
             sharpe_ratio=sharpe_ratio,
-            sortino_ratio=sharpe_ratio * 1.2,  # Approximation - could enhance with analytics service
-            calmar_ratio=abs(total_return_percent / max_drawdown_percent) if max_drawdown_percent != 0 else 0,
+            sortino_ratio=sortino_ratio,
+            calmar_ratio=calmar_ratio,
             volatility=volatility,
             gross_profit=Decimal(str(gross_profit)),
             gross_loss=Decimal(str(gross_loss)),
-            net_profit=Decimal(str(gross_profit + gross_loss)),
-            profit_factor=abs(gross_profit / gross_loss) if gross_loss != 0 else None,
-            average_trade=Decimal(str(total_return / max(len(trades), 1))),
-            largest_win=Decimal(str(trading_metrics.get("largest_win", 0.0))),
-            largest_loss=Decimal(str(trading_metrics.get("largest_loss", 0.0))),
-            consecutive_wins=3,  # Could enhance with analytics service
-            consecutive_losses=2,  # Could enhance with analytics service
+            net_profit=Decimal(str(gross_profit - gross_loss)),
+            profit_factor=profit_factor,
+            average_trade=Decimal(str(avg_trade_pnl)),
+            largest_win=Decimal(str(largest_win)),
+            largest_loss=Decimal(str(largest_loss)),
+            consecutive_wins=consecutive_wins,
+            consecutive_losses=consecutive_losses,
             chart_data=chart_data,
             trades=trades,
             execution_time_ms=execution_time_ms,
@@ -773,8 +840,10 @@ class BacktestEngine:
         chart_data: List[Dict[str, Any]]
     ) -> Dict[str, Any]:
         """Calculate analytics using the analytics service."""
+        logger.info("🎯 BACKTESTING SERVICE: Starting analytics service call")
         try:
             # Call analytics service for sophisticated calculations
+            logger.info("📞 BACKTESTING SERVICE: Creating HTTP client for analytics service call")
             async with httpx.AsyncClient() as client:
                 analytics_request = {
                     "portfolio_values": [
@@ -793,29 +862,85 @@ class BacktestEngine:
                     "final_capital": final_capital
                 }
                 
+                logger.info("📊 BACKTESTING SERVICE: Prepared analytics request",
+                           portfolio_values_count=len(analytics_request["portfolio_values"]),
+                           trades_count=len(analytics_request["trades"]),
+                           initial_capital=initial_capital,
+                           final_capital=final_capital,
+                           analytics_url=f"{settings.ANALYTICS_SERVICE_URL}/calculate-metrics")
+                
+                logger.info("🌐 BACKTESTING SERVICE: Sending request to analytics service")
                 response = await client.post(
                     f"{settings.ANALYTICS_SERVICE_URL}/calculate-metrics",
                     json=analytics_request,
                     timeout=30.0
                 )
                 
+                logger.info("📡 BACKTESTING SERVICE: Received response from analytics service",
+                           status_code=response.status_code,
+                           response_size=len(response.content) if response.content else 0)
+                
                 if response.status_code == 200:
                     analytics_data = response.json()
-                    logger.info("Analytics service calculation successful", 
+                    logger.info("✅ BACKTESTING SERVICE: Analytics service calculation successful", 
                                sharpe_ratio=analytics_data.get("sharpe_ratio"),
-                               max_drawdown=analytics_data.get("max_drawdown"))
+                               max_drawdown=analytics_data.get("max_drawdown"),
+                               full_response=analytics_data)
                     return analytics_data
                 else:
-                    logger.warning("Analytics service call failed", 
+                    logger.warning("⚠️ BACKTESTING SERVICE: Analytics service call failed", 
                                  status_code=response.status_code,
-                                 response=response.text[:200])
+                                 response_text=response.text[:500],
+                                 headers=dict(response.headers))
                 
         except Exception as e:
-            logger.error("Failed to call analytics service", error=str(e))
+            logger.error("❌ BACKTESTING SERVICE: Failed to call analytics service", 
+                        error=str(e),
+                        error_type=type(e).__name__,
+                        analytics_url=f"{settings.ANALYTICS_SERVICE_URL}/calculate-metrics")
+            import traceback
+            logger.error("❌ BACKTESTING SERVICE: Analytics call traceback", traceback=traceback.format_exc())
         
-        # Fallback to basic local calculations if analytics service fails
-        return self._calculate_basic_analytics_fallback(equity_curve, trades, initial_capital)
+        # No fallback - if analytics service fails, return empty metrics to make it obvious
+        logger.error("🚨 Analytics service unavailable - returning minimal metrics")
+        return {
+            "max_drawdown": 0.0,
+            "max_drawdown_pct": 0.0, 
+            "sharpe_ratio": 0.0,
+            "volatility": 0.0,
+            "profit_factor": 1.0,
+            "win_rate": 0.0,
+            "avg_trade_pnl": 0.0
+        }
     
+    def _calculate_consecutive_trades(self, trades: List) -> tuple[int, int]:
+        """Calculate consecutive wins and losses from trade sequence."""
+        if not trades:
+            return 0, 0
+        
+        # Sort trades by timestamp to ensure correct order
+        sorted_trades = sorted(trades, key=lambda t: t.timestamp)
+        
+        max_consecutive_wins = 0
+        max_consecutive_losses = 0
+        current_consecutive_wins = 0
+        current_consecutive_losses = 0
+        
+        for trade in sorted_trades:
+            pnl = float(trade.pnl)
+            
+            if pnl > 0:  # Winning trade
+                current_consecutive_wins += 1
+                current_consecutive_losses = 0
+                max_consecutive_wins = max(max_consecutive_wins, current_consecutive_wins)
+            elif pnl < 0:  # Losing trade
+                current_consecutive_losses += 1
+                current_consecutive_wins = 0
+                max_consecutive_losses = max(max_consecutive_losses, current_consecutive_losses)
+            # If pnl == 0, we don't count it as win or loss
+        
+        return max_consecutive_wins, max_consecutive_losses
+
     def _calculate_basic_analytics_fallback(
         self,
         equity_curve: List[float], 

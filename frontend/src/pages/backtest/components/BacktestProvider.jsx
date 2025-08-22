@@ -55,7 +55,25 @@ export const BacktestProvider = ({ children }) => {
         console.log(`Backtest job ${jobId} status:`, jobStatus);
 
         if (jobStatus.status === 'completed') {
-          return jobStatus;
+          // Validate that analytics are actually complete before returning
+          const results = jobStatus.results;
+          if (results && 
+              results.sharpe_ratio !== null && 
+              results.sharpe_ratio !== undefined &&
+              results.sortino_ratio !== null &&
+              results.sortino_ratio !== undefined) {
+            console.log('Backtest completed with full analytics:', results);
+            return jobStatus;
+          } else {
+            console.log('Status is completed but analytics not yet complete, continuing to poll...', {
+              sharpe_ratio: results?.sharpe_ratio,
+              sortino_ratio: results?.sortino_ratio,
+              attempt: attempt + 1
+            });
+            // Continue polling until analytics are ready
+            await new Promise(resolve => setTimeout(resolve, 1000));
+            continue;
+          }
         } else if (jobStatus.status === 'failed') {
           throw new Error(jobStatus.error_message || 'Backtest job failed');
         } else if (jobStatus.status === 'cancelled') {

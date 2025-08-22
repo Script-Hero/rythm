@@ -2,12 +2,37 @@ import { useState, memo } from 'react';
 import { Handle, Position } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 
-function TakeProfitNode({ data, id }) {
+function TakeProfitNode({ data, id, updateNodeData }) {
   const [profitType, setProfitType] = useState(data.profitType || 'fixed_percent');
   const [profitValue, setProfitValue] = useState(data.profitValue || 5);
   const [partialProfits, setPartialProfits] = useState(data.partialProfits || false);
   const [firstTarget, setFirstTarget] = useState(data.firstTarget || 3);
   const [secondTarget, setSecondTarget] = useState(data.secondTarget || 6);
+
+  const handleProfitTypeChange = (value) => {
+    setProfitType(value);
+    updateNodeData(id, { profitType: value });
+  };
+
+  const handleProfitValueChange = (value) => {
+    setProfitValue(value);
+    updateNodeData(id, { profitValue: value });
+  };
+
+  const handlePartialProfitsChange = (value) => {
+    setPartialProfits(value);
+    updateNodeData(id, { partialProfits: value });
+  };
+
+  const handleFirstTargetChange = (value) => {
+    setFirstTarget(value);
+    updateNodeData(id, { firstTarget: value });
+  };
+
+  const handleSecondTargetChange = (value) => {
+    setSecondTarget(value);
+    updateNodeData(id, { secondTarget: value });
+  };
 
   return (
     <div className="bg-green-100 border-2 border-green-300 rounded-lg p-3 min-w-36">
@@ -18,7 +43,7 @@ function TakeProfitNode({ data, id }) {
           <label className="text-xs text-gray-600 block">Type</label>
           <select
             value={profitType}
-            onChange={(e) => setProfitType(e.target.value)}
+            onChange={(e) => handleProfitTypeChange(e.target.value)}
             className="w-full px-2 py-1 text-xs border rounded"
           >
             <option value="fixed_percent">Fixed %</option>
@@ -35,7 +60,7 @@ function TakeProfitNode({ data, id }) {
           <input
             type="number"
             value={profitValue}
-            onChange={(e) => setProfitValue(parseFloat(e.target.value))}
+            onChange={(e) => handleProfitValueChange(parseFloat(e.target.value))}
             className="w-full px-2 py-1 text-xs border rounded"
             step="0.1"
             min="0.1"
@@ -46,7 +71,7 @@ function TakeProfitNode({ data, id }) {
           <input
             type="checkbox"
             checked={partialProfits}
-            onChange={(e) => setPartialProfits(e.target.checked)}
+            onChange={(e) => handlePartialProfitsChange(e.target.checked)}
             className="w-3 h-3"
           />
           <label className="text-xs text-gray-600">Partial Profits</label>
@@ -59,7 +84,7 @@ function TakeProfitNode({ data, id }) {
               <input
                 type="number"
                 value={firstTarget}
-                onChange={(e) => setFirstTarget(parseFloat(e.target.value))}
+                onChange={(e) => handleFirstTargetChange(parseFloat(e.target.value))}
                 className="w-full px-2 py-1 text-xs border rounded"
                 step="0.1"
                 min="0.1"
@@ -70,7 +95,7 @@ function TakeProfitNode({ data, id }) {
               <input
                 type="number"
                 value={secondTarget}
-                onChange={(e) => setSecondTarget(parseFloat(e.target.value))}
+                onChange={(e) => handleSecondTargetChange(parseFloat(e.target.value))}
                 className="w-full px-2 py-1 text-xs border rounded"
                 step="0.1"
                 min="0.1"

@@ -2,10 +2,25 @@ import { useState, memo } from 'react';
 import { Handle, Position } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 
-function PatternNode({ data, id }) {
+function PatternNode({ data, id, updateNodeData }) {
   const [patternType, setPatternType] = useState(data.patternType || 'double_top');
   const [confidence, setConfidence] = useState(data.confidence || 0.8);
   const [lookbackBars, setLookbackBars] = useState(data.lookbackBars || 50);
+
+  const handlePatternTypeChange = (value) => {
+    setPatternType(value);
+    updateNodeData(id, { patternType: value });
+  };
+
+  const handleConfidenceChange = (value) => {
+    setConfidence(value);
+    updateNodeData(id, { confidence: value });
+  };
+
+  const handleLookbackBarsChange = (value) => {
+    setLookbackBars(value);
+    updateNodeData(id, { lookbackBars: value });
+  };
 
   const patterns = [
     { value: 'double_top', label: 'Double Top' },
@@ -28,7 +43,7 @@ function PatternNode({ data, id }) {
           <label className="text-xs text-gray-600 block">Pattern</label>
           <select
             value={patternType}
-            onChange={(e) => setPatternType(e.target.value)}
+            onChange={(e) => handlePatternTypeChange(e.target.value)}
             className="w-full px-2 py-1 text-xs border rounded"
           >
             {patterns.map(pattern => (
@@ -47,7 +62,7 @@ function PatternNode({ data, id }) {
             max="1"
             step="0.05"
             value={confidence}
-            onChange={(e) => setConfidence(parseFloat(e.target.value))}
+            onChange={(e) => handleConfidenceChange(parseFloat(e.target.value))}
             className="w-full"
           />
           <span className="text-xs text-gray-500">{(confidence * 100).toFixed(0)}%</span>
@@ -58,7 +73,7 @@ function PatternNode({ data, id }) {
           <input
             type="number"
             value={lookbackBars}
-            onChange={(e) => setLookbackBars(parseInt(e.target.value))}
+            onChange={(e) => handleLookbackBarsChange(parseInt(e.target.value))}
             className="w-full px-2 py-1 text-xs border rounded"
             min="20"
             max="200"

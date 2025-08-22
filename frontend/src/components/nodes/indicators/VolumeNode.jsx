@@ -1,9 +1,19 @@
 import { useState, memo } from 'react';
 import { Handle, Position } from '@xyflow/react';
 
-function VolumeNode({ data, id }) {
+function VolumeNode({ data, id, updateNodeData }) {
   const [volumeType, setVolumeType] = useState(data.volumeType || 'raw');
   const [period, setPeriod] = useState(data.period || 20);
+
+  const handleVolumeTypeChange = (value) => {
+    setVolumeType(value);
+    updateNodeData(id, { volumeType: value });
+  };
+
+  const handlePeriodChange = (value) => {
+    setPeriod(value);
+    updateNodeData(id, { period: value });
+  };
 
   return (
     <div className="bg-green-100 border-2 border-green-300 rounded-lg p-3 min-w-36">
@@ -14,7 +24,7 @@ function VolumeNode({ data, id }) {
           <label className="text-xs text-gray-600 block">Type</label>
           <select
             value={volumeType}
-            onChange={(e) => setVolumeType(e.target.value)}
+            onChange={(e) => handleVolumeTypeChange(e.target.value)}
             className="w-full px-2 py-1 text-xs border rounded"
           >
             <option value="raw">Raw Volume</option>
@@ -30,7 +40,7 @@ function VolumeNode({ data, id }) {
             <input
               type="number"
               value={period}
-              onChange={(e) => setPeriod(parseInt(e.target.value))}
+              onChange={(e) => handlePeriodChange(parseInt(e.target.value))}
               className="w-full px-2 py-1 text-xs border rounded"
               min="1"
               max="100"

@@ -2,11 +2,31 @@ import { useState, memo } from 'react';
 import { Handle, Position } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 
-function TimeNode({ data, id }) {
+function TimeNode({ data, id, updateNodeData }) {
   const [timeFrame, setTimeFrame] = useState(data.timeFrame || '1h');
   const [startTime, setStartTime] = useState(data.startTime || '09:30');
   const [endTime, setEndTime] = useState(data.endTime || '16:00');
   const [timezone, setTimezone] = useState(data.timezone || 'EST');
+
+  const handleTimeFrameChange = (value) => {
+    setTimeFrame(value);
+    updateNodeData(id, { timeFrame: value });
+  };
+
+  const handleStartTimeChange = (value) => {
+    setStartTime(value);
+    updateNodeData(id, { startTime: value });
+  };
+
+  const handleEndTimeChange = (value) => {
+    setEndTime(value);
+    updateNodeData(id, { endTime: value });
+  };
+
+  const handleTimezoneChange = (value) => {
+    setTimezone(value);
+    updateNodeData(id, { timezone: value });
+  };
 
   return (
     <div className="bg-blue-100 border-2 border-blue-300 rounded-lg p-3 min-w-36">
@@ -17,7 +37,7 @@ function TimeNode({ data, id }) {
           <label className="text-xs text-gray-600 block">Timeframe</label>
           <select
             value={timeFrame}
-            onChange={(e) => setTimeFrame(e.target.value)}
+            onChange={(e) => handleTimeFrameChange(e.target.value)}
             className="w-full px-2 py-1 text-xs border rounded"
           >
             <option value="1m">1 Minute</option>
@@ -34,7 +54,7 @@ function TimeNode({ data, id }) {
           <input
             type="time"
             value={startTime}
-            onChange={(e) => setStartTime(e.target.value)}
+            onChange={(e) => handleStartTimeChange(e.target.value)}
             className="w-full px-2 py-1 text-xs border rounded"
           />
         </div>
@@ -44,7 +64,7 @@ function TimeNode({ data, id }) {
           <input
             type="time"
             value={endTime}
-            onChange={(e) => setEndTime(e.target.value)}
+            onChange={(e) => handleEndTimeChange(e.target.value)}
             className="w-full px-2 py-1 text-xs border rounded"
           />
         </div>
@@ -53,7 +73,7 @@ function TimeNode({ data, id }) {
           <label className="text-xs text-gray-600 block">Timezone</label>
           <select
             value={timezone}
-            onChange={(e) => setTimezone(e.target.value)}
+            onChange={(e) => handleTimezoneChange(e.target.value)}
             className="w-full px-2 py-1 text-xs border rounded"
           >
             <option value="EST">EST</option>

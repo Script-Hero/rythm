@@ -1,9 +1,19 @@
 import { useState, memo } from 'react';
 import { Handle, Position } from '@xyflow/react';
 
-function BollingerBandsNode({ data, id }) {
+function BollingerBandsNode({ data, id, updateNodeData }) {
   const [period, setPeriod] = useState(data.period || 20);
   const [deviation, setDeviation] = useState(data.deviation || 2);
+
+  const handlePeriodChange = (newPeriod) => {
+    setPeriod(newPeriod);
+    updateNodeData?.(id, { period: newPeriod });
+  };
+
+  const handleDeviationChange = (newDeviation) => {
+    setDeviation(newDeviation);
+    updateNodeData?.(id, { deviation: newDeviation });
+  };
 
   return (
     <div className="bg-green-100 border-2 border-green-300 rounded-lg p-3 min-w-36">
@@ -15,7 +25,7 @@ function BollingerBandsNode({ data, id }) {
           <input
             type="number"
             value={period}
-            onChange={(e) => setPeriod(parseInt(e.target.value))}
+            onChange={(e) => handlePeriodChange(parseInt(e.target.value))}
             className="w-full px-2 py-1 text-xs border rounded"
             min="5"
             max="100"
@@ -27,7 +37,7 @@ function BollingerBandsNode({ data, id }) {
           <input
             type="number"
             value={deviation}
-            onChange={(e) => setDeviation(parseFloat(e.target.value))}
+            onChange={(e) => handleDeviationChange(parseFloat(e.target.value))}
             className="w-full px-2 py-1 text-xs border rounded"
             min="0.1"
             max="5"

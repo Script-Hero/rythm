@@ -1,10 +1,25 @@
 import { useState, memo } from 'react';
 import { Handle, Position } from '@xyflow/react';
 
-function StochasticNode({ data, id }) {
+function StochasticNode({ data, id, updateNodeData }) {
   const [kPeriod, setKPeriod] = useState(data.kPeriod || 14);
   const [dPeriod, setDPeriod] = useState(data.dPeriod || 3);
   const [smooth, setSmooth] = useState(data.smooth || 3);
+
+  const handleKPeriodChange = (value) => {
+    setKPeriod(value);
+    updateNodeData?.(id, { kPeriod: value });
+  };
+
+  const handleDPeriodChange = (value) => {
+    setDPeriod(value);
+    updateNodeData?.(id, { dPeriod: value });
+  };
+
+  const handleSmoothChange = (value) => {
+    setSmooth(value);
+    updateNodeData?.(id, { smooth: value });
+  };
 
   return (
     <div className="bg-green-100 border-2 border-green-300 rounded-lg p-3 min-w-36">
@@ -16,7 +31,7 @@ function StochasticNode({ data, id }) {
           <input
             type="number"
             value={kPeriod}
-            onChange={(e) => setKPeriod(parseInt(e.target.value))}
+            onChange={(e) => handleKPeriodChange(parseInt(e.target.value))}
             className="w-full px-2 py-1 text-xs border rounded"
             min="1"
             max="50"
@@ -28,7 +43,7 @@ function StochasticNode({ data, id }) {
           <input
             type="number"
             value={dPeriod}
-            onChange={(e) => setDPeriod(parseInt(e.target.value))}
+            onChange={(e) => handleDPeriodChange(parseInt(e.target.value))}
             className="w-full px-2 py-1 text-xs border rounded"
             min="1"
             max="20"
@@ -40,7 +55,7 @@ function StochasticNode({ data, id }) {
           <input
             type="number"
             value={smooth}
-            onChange={(e) => setSmooth(parseInt(e.target.value))}
+            onChange={(e) => handleSmoothChange(parseInt(e.target.value))}
             className="w-full px-2 py-1 text-xs border rounded"
             min="1"
             max="10"

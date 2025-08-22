@@ -2,11 +2,31 @@ import { useState, memo } from 'react';
 import { Handle, Position } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 
-function StopLossNode({ data, id }) {
+function StopLossNode({ data, id, updateNodeData }) {
   const [stopType, setStopType] = useState(data.stopType || 'fixed_percent');
   const [stopValue, setStopValue] = useState(data.stopValue || 2);
   const [trailingEnabled, setTrailingEnabled] = useState(data.trailingEnabled || false);
   const [trailingDistance, setTrailingDistance] = useState(data.trailingDistance || 1);
+
+  const handleStopTypeChange = (value) => {
+    setStopType(value);
+    updateNodeData(id, { stopType: value });
+  };
+
+  const handleStopValueChange = (value) => {
+    setStopValue(value);
+    updateNodeData(id, { stopValue: value });
+  };
+
+  const handleTrailingEnabledChange = (value) => {
+    setTrailingEnabled(value);
+    updateNodeData(id, { trailingEnabled: value });
+  };
+
+  const handleTrailingDistanceChange = (value) => {
+    setTrailingDistance(value);
+    updateNodeData(id, { trailingDistance: value });
+  };
 
   return (
     <div className="bg-red-100 border-2 border-red-300 rounded-lg p-3 min-w-36">
@@ -17,7 +37,7 @@ function StopLossNode({ data, id }) {
           <label className="text-xs text-gray-600 block">Type</label>
           <select
             value={stopType}
-            onChange={(e) => setStopType(e.target.value)}
+            onChange={(e) => handleStopTypeChange(e.target.value)}
             className="w-full px-2 py-1 text-xs border rounded"
           >
             <option value="fixed_percent">Fixed %</option>
@@ -34,7 +54,7 @@ function StopLossNode({ data, id }) {
           <input
             type="number"
             value={stopValue}
-            onChange={(e) => setStopValue(parseFloat(e.target.value))}
+            onChange={(e) => handleStopValueChange(parseFloat(e.target.value))}
             className="w-full px-2 py-1 text-xs border rounded"
             step="0.1"
             min="0.1"
@@ -45,7 +65,7 @@ function StopLossNode({ data, id }) {
           <input
             type="checkbox"
             checked={trailingEnabled}
-            onChange={(e) => setTrailingEnabled(e.target.checked)}
+            onChange={(e) => handleTrailingEnabledChange(e.target.checked)}
             className="w-3 h-3"
           />
           <label className="text-xs text-gray-600">Trailing Stop</label>
@@ -57,7 +77,7 @@ function StopLossNode({ data, id }) {
             <input
               type="number"
               value={trailingDistance}
-              onChange={(e) => setTrailingDistance(parseFloat(e.target.value))}
+              onChange={(e) => handleTrailingDistanceChange(parseFloat(e.target.value))}
               className="w-full px-2 py-1 text-xs border rounded"
               step="0.1"
               min="0.1"
