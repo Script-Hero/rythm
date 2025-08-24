@@ -76,6 +76,46 @@ class Node(ABC):
 
 
 # Data Nodes
+@register_node("timeNode")
+class TimeNode(Node):
+    inputs = ()
+    outputs = ("time-out",)
+    
+    def compute(self, **inputs) -> Dict[str, Any]:
+        logger.info("⏰ TimeNode computing", 
+                   node_id=self.id,
+                   inputs_received=list(inputs.keys()))
+        
+        time_type = self.data.get("timeType", "hour")
+        current_time = time.time()
+        
+        if time_type == "hour":
+            time_value = int((current_time % 86400) // 3600)  # Hour of day (0-23)
+        elif time_type == "minute":
+            time_value = int((current_time % 3600) // 60)  # Minute of hour (0-59)
+        elif time_type == "day_of_week":
+            time_value = int((current_time // 86400) % 7)  # Day of week (0-6)
+        else:
+            time_value = int(current_time)  # Unix timestamp
+        
+        result = {"time-out": Decimal(str(time_value))}
+        logger.info("⏰ TimeNode result", result=result)
+        return result
+
+
+@register_node("spreadNode")
+class SpreadNode(Node):
+    inputs = ("bid-in", "ask-in")
+    outputs = ("spread-out",)
+    
+    def compute(self, bid_in=None, ask_in=None, **inputs) -> Dict[str, Any]:
+        if bid_in is None or ask_in is None:
+            return {"spread-out": None}
+        
+        spread = float(ask_in) - float(bid_in)
+        return {"spread-out": Decimal(str(spread))}
+
+
 @register_node("priceNode")
 class PriceNode(Node):
     inputs = ()
@@ -243,6 +283,74 @@ class RSINode(Node):
             return {"rsi-out": Decimal(str(rsi))}
         
         return {"rsi-out": None}
+
+
+@register_node("williamsRNode")
+class WilliamsRNode(Node):
+    inputs = ("high-in", "low-in", "close-in")
+    outputs = ("williams-r-out",)
+    
+    def compute(self, high_in=None, low_in=None, close_in=None, **inputs) -> Dict[str, Any]:
+        if any(x is None for x in [high_in, low_in, close_in]):
+            return {"williams-r-out": None}
+        
+        period = int(self.data.get("period", 14))
+        
+        highs = self.state.setdefault("highs", deque(maxlen=period))
+        lows = self.state.setdefault("lows", deque(maxlen=period))
+        closes = self.state.setdefault("closes", deque(maxlen=period))
+        
+        highs.append(float(high_in))
+        lows.append(float(low_in))
+        closes.append(float(close_in))
+        
+        if len(closes) < period:
+            return {"williams-r-out": None}
+        
+        highest_high = max(highs)
+        lowest_low = min(lows)
+        current_close = closes[-1]
+        
+        if highest_high == lowest_low:
+            williams_r = -50  # Default when no range
+        else:
+            williams_r = ((highest_high - current_close) / (highest_high - lowest_low)) * -100
+        
+        return {"williams-r-out": Decimal(str(williams_r))}
+
+
+@register_node("cciNode")
+class CCINode(Node):
+    inputs = ("high-in", "low-in", "close-in")
+    outputs = ("cci-out",)
+    
+    def compute(self, high_in=None, low_in=None, close_in=None, **inputs) -> Dict[str, Any]:
+        if any(x is None for x in [high_in, low_in, close_in]):
+            return {"cci-out": None}
+        
+        period = int(self.data.get("period", 20))
+        
+        # Calculate Typical Price
+        typical_price = (float(high_in) + float(low_in) + float(close_in)) / 3
+        
+        typical_prices = self.state.setdefault("typical_prices", deque(maxlen=period))
+        typical_prices.append(typical_price)
+        
+        if len(typical_prices) < period:
+            return {"cci-out": None}
+        
+        # Calculate SMA of typical prices
+        sma_tp = sum(typical_prices) / len(typical_prices)
+        
+        # Calculate mean deviation
+        mean_deviation = sum(abs(tp - sma_tp) for tp in typical_prices) / len(typical_prices)
+        
+        if mean_deviation == 0:
+            cci = 0
+        else:
+            cci = (typical_price - sma_tp) / (0.015 * mean_deviation)
+        
+        return {"cci-out": Decimal(str(cci))}
 
 
 # Additional Technical Indicators
@@ -661,6 +769,86 @@ class CrossoverNode(Node):
         return {"cross-out": cross}
 
 
+@register_node("thresholdNode")
+class ThresholdNode(Node):
+    inputs = ("value-in",)
+    outputs = ("above-out", "below-out")
+    
+    def compute(self, value_in=None, **inputs) -> Dict[str, Any]:
+        if value_in is None:
+            return {"above-out": False, "below-out": False}
+        
+        threshold = float(self.data.get("threshold", 50))
+        value = float(value_in)
+        
+        return {
+            "above-out": value > threshold,
+            "below-out": value < threshold
+        }
+
+
+@register_node("divergenceNode")
+class DivergenceNode(Node):
+    inputs = ("price-in", "indicator-in")
+    outputs = ("divergence-out",)
+    
+    def compute(self, price_in=None, indicator_in=None, **inputs) -> Dict[str, Any]:
+        if price_in is None or indicator_in is None:
+            return {"divergence-out": False}
+        
+        period = int(self.data.get("period", 5))
+        
+        prices = self.state.setdefault("prices", deque(maxlen=period))
+        indicators = self.state.setdefault("indicators", deque(maxlen=period))
+        
+        prices.append(float(price_in))
+        indicators.append(float(indicator_in))
+        
+        if len(prices) < period:
+            return {"divergence-out": False}
+        
+        # Simple divergence detection: price going up while indicator going down (or vice versa)
+        price_trend = prices[-1] - prices[0]
+        indicator_trend = indicators[-1] - indicators[0]
+        
+        # Bullish divergence: price down, indicator up
+        # Bearish divergence: price up, indicator down
+        divergence = (price_trend * indicator_trend) < 0 and abs(price_trend) > 0.01
+        
+        return {"divergence-out": divergence}
+
+
+@register_node("patternNode")
+class PatternNode(Node):
+    inputs = ("price-in",)
+    outputs = ("pattern-out",)
+    
+    def compute(self, price_in=None, **inputs) -> Dict[str, Any]:
+        if price_in is None:
+            return {"pattern-out": False}
+        
+        pattern_type = self.data.get("patternType", "double_top")
+        lookback = int(self.data.get("lookback", 10))
+        
+        prices = self.state.setdefault("prices", deque(maxlen=lookback * 2))
+        prices.append(float(price_in))
+        
+        if len(prices) < lookback:
+            return {"pattern-out": False}
+        
+        # Simple pattern detection (placeholder)
+        if pattern_type == "double_top":
+            # Look for two peaks with similar heights
+            recent_prices = list(prices)[-lookback:]
+            max_price = max(recent_prices)
+            peaks = [i for i, p in enumerate(recent_prices) if p >= max_price * 0.98]
+            pattern_detected = len(peaks) >= 2
+        else:
+            pattern_detected = False
+        
+        return {"pattern-out": pattern_detected}
+
+
 # Enhanced Action Nodes
 @register_node("buyNode")
 class BuyNode(Node):
@@ -856,6 +1044,48 @@ class TakeProfitNode(Node):
         return {"profit-triggered": triggered}
 
 
+@register_node("positionSizeNode")
+class PositionSizeNode(Node):
+    inputs = ("trigger-in", "price-in")
+    outputs = ("size-out",)
+    
+    def compute(self, trigger_in=None, price_in=None, **inputs) -> Dict[str, Any]:
+        if not trigger_in or price_in is None:
+            return {"size-out": 0}
+        
+        size_type = self.data.get("sizeType", "fixed")
+        size_value = self.data.get("sizeValue", 100)
+        
+        if size_type == "fixed":
+            position_size = size_value
+        elif size_type == "percent_portfolio":
+            # This would normally get portfolio value from context
+            portfolio_value = float(self.data.get("portfolioValue", 10000))
+            position_size = (portfolio_value * size_value / 100) / float(price_in)
+        elif size_type == "risk_based":
+            # Risk-based sizing (simplified)
+            risk_amount = float(self.data.get("riskAmount", 100))
+            stop_loss_pct = float(self.data.get("stopLossPct", 2))
+            position_size = risk_amount / (float(price_in) * stop_loss_pct / 100)
+        else:
+            position_size = size_value
+        
+        return {"size-out": Decimal(str(max(0, position_size)))}
+
+
+@register_node("labelNode")
+class LabelNode(Node):
+    inputs = ()
+    outputs = ("label-out",)
+    
+    def compute(self, **inputs) -> Dict[str, Any]:
+        # Label node is for UI organization only, passes through a constant value
+        label_text = self.data.get("labelText", "Label")
+        label_value = self.data.get("labelValue", 1)
+        
+        return {"label-out": Decimal(str(label_value))}
+
+
 def get_available_nodes() -> Dict[str, Dict[str, Any]]:
     """Get all available node types with their metadata."""
     nodes_info = {}
@@ -874,16 +1104,19 @@ def get_available_nodes() -> Dict[str, Dict[str, Any]]:
 
 def _get_node_category(node_type: str) -> str:
     """Categorize nodes for UI organization."""
-    if node_type in ["priceNode", "volumeNode", "timeNode"]:
+    if node_type in ["priceNode", "volumeNode", "timeNode", "spreadNode"]:
         return "data"
     elif node_type in ["smaNode", "emaNode", "rsiNode", "macdNode", "bollingerBandsNode", 
-                       "atrNode", "adxNode", "stochasticNode"]:
+                       "atrNode", "adxNode", "stochasticNode", "williamsRNode", "cciNode"]:
         return "indicators"
-    elif node_type in ["compareNode", "andNode", "orNode", "notNode", "crossoverNode"]:
+    elif node_type in ["compareNode", "andNode", "orNode", "notNode", "crossoverNode", 
+                       "thresholdNode", "divergenceNode", "patternNode"]:
         return "logic"
-    elif node_type in ["buyNode", "sellNode", "holdNode"]:
+    elif node_type in ["buyNode", "sellNode", "holdNode", "positionSizeNode"]:
         return "actions"
     elif node_type in ["stopLossNode", "takeProfitNode"]:
         return "risk_management"
+    elif node_type in ["labelNode"]:
+        return "other"
     else:
         return "other"
