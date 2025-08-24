@@ -23,6 +23,7 @@ const Toaster = ({ ...props }: ToasterProps) => {
         } as React.CSSProperties
       }
       richColors
+      closeButton
       {...props}
     />
   )
