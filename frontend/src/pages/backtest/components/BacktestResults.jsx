@@ -66,7 +66,7 @@ const BacktestResults = ({
 
           {/* Overview Tab - Main Chart with Statistics */}
           <TabsContent value="overview" className="flex-1 animate-in fade-in-50 slide-in-from-bottom-4 duration-500  relative">
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 flex-1">
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 flex-1 ml-4">
               {/* Main Chart Area - Takes more space */}
               <div className="lg:col-span-2 bg-white border border-gray-200 rounded-xl shadow-lg flex flex-col overflow-hidden flex-1 flex flex-col">
                 <div className="px-4 py-3 border-b border-gray-100 flex-shrink-0">
@@ -87,10 +87,10 @@ const BacktestResults = ({
               </div>
               
               {/* Statistics Sidebar */}
-              <div className="bg-white border border-gray-200 rounded-xl shadow-lg flex flex-col overflow-y-visible min-h-[500px] relative">
+              <div className="bg-white border border-gray-200 rounded-xl shadow-lg flex flex-col overflow-y-visible min-h-[500px] relative mr-4">
                 <div className="flex-1 p-4 overflow-y-visible">
-                  {/* Floating Win Rate Dial - Positioned absolutely */}
-                  <div className="absolute -top-17 right-2 z-10">
+                  {/* Hidden OVRDial for future use */}
+                  <div className="hidden">
                     <div className="relative">
                       {/* Glowing background effect */}
                       <div className="absolute inset-0 bg-gradient-to-r from-blue-400 via-purple-500 to-pink-500 rounded-full blur-xl opacity-30 animate-pulse scale-110"></div>
@@ -112,7 +112,7 @@ const BacktestResults = ({
                   </div>
                   
                   {/* Key Statistics - Takes all available space */}
-                  <KeyStatistics data={{...(backtestResults['key_metrics'] || {}), runtime_days : backtestResults['runtime_days'] || 0, runtime_years : backtestResults['runtime_years'] || 0}} />
+                  <KeyStatistics data={{...(backtestResults['key_metrics'] || {}), runtime_days : backtestResults['runtime_days'] || 0, runtime_years : backtestResults['runtime_years'] || 0}} ovrPercent={OVRPercent} />
                 </div>
               </div>
             </div>
@@ -120,7 +120,7 @@ const BacktestResults = ({
 
           {/* Returns Tab */}
           <TabsContent value="returns" className="flex-1 animate-in fade-in-50 slide-in-from-bottom-4 duration-500 overflow-hidden">
-            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 h-full">
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 h-full mx-4">
               <Card className="border-0 shadow-lg bg-gradient-to-br from-white to-green-50/30 backdrop-blur-sm transition-all duration-200 hover:shadow-xl hover:scale-[1.01] min-h-[350px]">
                 <CardHeader className="pb-3">
                   <CardTitle className="flex items-center gap-2 text-green-800 text-lg">
@@ -177,7 +177,7 @@ const BacktestResults = ({
 
           {/* Trading Tab */}
           <TabsContent value="trading" className="flex-1 animate-in fade-in-50 slide-in-from-bottom-4 duration-500 overflow-hidden">
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 h-full">
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 h-full mx-4">
               <Card className="border-0 shadow-lg bg-gradient-to-br from-white to-emerald-50/30 backdrop-blur-sm transition-all duration-200 hover:shadow-xl hover:scale-[1.01] min-h-[400px]">
                 <CardHeader className="pb-3">
                   <CardTitle className="flex items-center gap-2 text-emerald-800 text-lg">
@@ -221,7 +221,7 @@ const BacktestResults = ({
 
           {/* Risk Tab */}
           <TabsContent value="risk" className="flex-1 animate-in fade-in-50 slide-in-from-bottom-4 duration-500 overflow-hidden">
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 h-full">
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 h-full mx-4">
               <Card className="border-0 shadow-lg bg-gradient-to-br from-white to-red-50/30 backdrop-blur-sm transition-all duration-200 hover:shadow-xl hover:scale-[1.01] min-h-[400px]">
                 <CardHeader className="pb-3">
                   <CardTitle className="flex items-center gap-2 text-red-800 text-lg">
@@ -287,7 +287,7 @@ const BacktestResults = ({
 
           {/* Advanced Tab */}
           <TabsContent value="advanced" className="flex-1 animate-in fade-in-50 slide-in-from-bottom-4 duration-500 overflow-hidden">
-            <div className="grid grid-cols-1 gap-4 h-full">
+            <div className="grid grid-cols-1 gap-4 h-full mx-4">
               <Card className="border-0 shadow-lg bg-gradient-to-br from-white to-indigo-50/30 backdrop-blur-sm transition-all duration-200 hover:shadow-xl hover:scale-[1.01] min-h-[500px]">
                 <CardHeader className="pb-3">
                   <CardTitle className="flex items-center gap-2 text-indigo-800 text-lg">
