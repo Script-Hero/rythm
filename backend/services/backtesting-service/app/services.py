@@ -24,6 +24,7 @@ class DatabaseService:
     
     def __init__(self):
         self._pool = None
+        self._redis = None
     
     async def initialize(self):
         """Initialize database connection."""
@@ -35,6 +36,17 @@ class DatabaseService:
                 command_timeout=60
             )
             logger.info("Database service initialized successfully")
+            
+            # Initialize Redis for chart data caching
+            try:
+                import redis.asyncio as redis
+                self._redis = redis.from_url(settings.REDIS_URL)
+                await self._redis.ping()
+                logger.info("Redis connection established for chart data caching")
+            except Exception as e:
+                logger.warning("Failed to connect to Redis, chart data caching will be disabled", error=str(e))
+                self._redis = None
+                
         except Exception as e:
             logger.error("Failed to initialize database", error=str(e))
             raise
@@ -43,6 +55,8 @@ class DatabaseService:
         """Shutdown database connection."""
         if self._pool:
             await self._pool.close()
+        if self._redis:
+            await self._redis.aclose()
         logger.info("Database service shutdown")
     
     async def is_connected(self) -> bool:
@@ -220,6 +234,20 @@ class DatabaseService:
                         'consecutive_losses': results.consecutive_losses
                     })
                 )
+                
+                # Cache chart_data in Redis for 24 hours for recently completed backtests
+                if results.chart_data and self._redis:
+                    try:
+                        chart_data_json = json.dumps(results.chart_data)
+                        await self._redis.setex(
+                            f"backtest:chart_data:{job_id}", 
+                            86400,  # 24 hours TTL
+                            chart_data_json
+                        )
+                        logger.info("Chart data cached in Redis", job_id=str(job_id), data_points=len(results.chart_data))
+                    except Exception as e:
+                        logger.warning("Failed to cache chart data in Redis", job_id=str(job_id), error=str(e))
+                
                 logger.info("Backtest results stored successfully", job_id=str(job_id))
                 
         except Exception as e:
@@ -272,11 +300,23 @@ class DatabaseService:
                     largest_loss=Decimal(str(analytics.get('largest_loss', 0.0))),
                     consecutive_wins=analytics.get('consecutive_wins', 0),
                     consecutive_losses=analytics.get('consecutive_losses', 0),
-                    chart_data=[],  # Not stored for retrieval
+                    chart_data=[],  # Will be populated from Redis cache below
                     trades=[],  # Not stored for retrieval
                     execution_time_ms=0,  # Not stored
                     total_periods=0  # Not stored
                 )
+                
+                # Try to retrieve chart_data from Redis cache
+                if self._redis:
+                    try:
+                        chart_data_json = await self._redis.get(f"backtest:chart_data:{job_id}")
+                        if chart_data_json:
+                            results.chart_data = json.loads(chart_data_json)
+                            logger.info("Chart data retrieved from Redis cache", job_id=str(job_id), data_points=len(results.chart_data))
+                        else:
+                            logger.info("No cached chart data found for job", job_id=str(job_id))
+                    except Exception as e:
+                        logger.warning("Failed to retrieve chart data from Redis cache", job_id=str(job_id), error=str(e))
                 
                 return results
                 

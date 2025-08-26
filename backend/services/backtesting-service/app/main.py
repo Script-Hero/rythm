@@ -123,10 +123,19 @@ async def run_backtest(
                    token_length=len(user_token) if user_token else 0)
         
         # Validate request parameters
-        if not await _validate_backtest_request(request):
+        try:
+            validation_result = await _validate_backtest_request(request)
+            if not validation_result:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Invalid backtest parameters"
+                )
+        except Exception as e:
+            logger.error("Validation failed", error=str(e), symbol=request.symbol, 
+                        start_date=request.start_date, end_date=request.end_date)
             raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Invalid backtest parameters"
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Validation error: {str(e)}"
             )
         
         # Get strategy from Strategy Service with user authentication
