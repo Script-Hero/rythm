@@ -158,11 +158,48 @@ export const BacktestProvider = ({ children }) => {
         
         setBacktestResults({
           key_metrics: {
+            // Core performance metrics
             win_rate: results.win_rate,
             total_return: parseFloat(results.total_return_percent),
             max_drawdown: parseFloat(results.max_drawdown_percent),
             sharpe_ratio: results.sharpe_ratio,
-            total_trades: results.total_trades
+            sortino_ratio: results.sortino_ratio,
+            calmar_ratio: results.calmar_ratio,
+            total_trades: results.total_trades,
+            
+            // Trade analysis metrics from backend
+            winning_trades: results.winning_trades,
+            losing_trades: results.losing_trades,
+            average_trade: parseFloat(results.average_trade || 0),
+            largest_win: parseFloat(results.largest_win || 0), 
+            largest_loss: parseFloat(results.largest_loss || 0),
+            consecutive_wins: results.consecutive_wins,
+            consecutive_losses: results.consecutive_losses,
+            gross_profit: parseFloat(results.gross_profit || 0),
+            gross_loss: parseFloat(results.gross_loss || 0),
+            net_profit: parseFloat(results.net_profit || 0),
+            profit_factor: results.profit_factor,
+            
+            // Portfolio metrics
+            initial_portfolio_value: parseFloat(results.initial_portfolio_value || 100000),
+            final_portfolio_value: parseFloat(results.final_portfolio_value || 100000),
+            
+            // Volatility and risk
+            volatility: results.volatility,
+            
+            // Derived metrics for compatibility
+            avg_win: results.winning_trades > 0 ? parseFloat(results.gross_profit) / results.winning_trades : 0,
+            avg_loss: results.losing_trades > 0 ? Math.abs(parseFloat(results.gross_loss)) / results.losing_trades : 0,
+            win_loss_ratio: results.losing_trades > 0 ? (parseFloat(results.gross_profit) / results.winning_trades) / (Math.abs(parseFloat(results.gross_loss)) / results.losing_trades) : 0,
+            expectancy: parseFloat(results.average_trade || 0),
+            
+            // Missing metrics with placeholder values
+            cagr: parseFloat(results.total_return_percent) / 100, // Approximation
+            information_ratio: results.sharpe_ratio || 0, // Fallback to Sharpe
+            turnover_ratio: 0, // Not calculated in backend yet
+            trades_per_day: results.total_periods > 0 ? results.total_trades / results.total_periods : 0,
+            capacity: 1000000, // Placeholder value
+            kelly_criterion: 0 // Not calculated in backend yet
           },
           advanced_metrics: {
             sortino_ratio: results.sortino_ratio,

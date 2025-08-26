@@ -34,7 +34,7 @@ structlog.configure(
         structlog.processors.add_log_level,
         structlog.processors.JSONRenderer()
     ],
-    wrapper_class=structlog.make_filtering_bound_logger(30),
+    wrapper_class=structlog.make_filtering_bound_logger(40),
     logger_factory=structlog.PrintLoggerFactory(),
     cache_logger_on_first_use=True,
 )
