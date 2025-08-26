@@ -820,9 +820,12 @@ class BacktestEngine:
             equity_curve.append(current_portfolio_value)
             
             chart_data.append({
-                "timestamp": timestamp.timestamp(),
-                "portfolio_value": current_portfolio_value,
-                "price": current_price,
+                "Datetime": timestamp.timestamp(),
+                "PortfolioValue": current_portfolio_value,
+                "Close": current_price,
+                "Open": open_price,
+                "High": high_price,
+                "Low": low_price,
                 "cash": cash,
                 "position": position
             })
