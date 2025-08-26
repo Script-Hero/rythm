@@ -306,7 +306,43 @@ async def calculate_metrics_for_backtest(request: dict):
         trading_period_years = max(len(values) / 252, 1/252)  # Minimum 1 trading day
         annual_return = total_return_pct / trading_period_years
         calmar_ratio = annual_return / max_drawdown_pct if max_drawdown_pct > 0 else 0
-        
+
+        # Sterling Ratio (Annual return / Average drawdown percentage)
+        # Use average of all drawdown magnitudes from the underwater curve
+        sterling_ratio = 0.0
+        try:
+            if values:
+                peak_val = values[0]
+                underwater_vals = []
+                for v in values:
+                    if v > peak_val:
+                        peak_val = v
+                    dd = (v / peak_val) - 1.0 if peak_val > 0 else 0.0  # negative or 0
+                    if dd < 0:
+                        underwater_vals.append(abs(dd) * 100.0)  # percent magnitude
+                avg_drawdown_pct = (sum(underwater_vals) / len(underwater_vals)) if underwater_vals else 0.0
+                sterling_ratio = (annual_return / avg_drawdown_pct) if avg_drawdown_pct > 0 else 0.0
+        except Exception as e:
+            logger.warning("Failed to calculate Sterling ratio", error=str(e))
+
+        # Ulcer Index: sqrt(mean(square(drawdown_pct))) over the period
+        ulcer_index = 0.0
+        try:
+            if values:
+                peak_val2 = values[0]
+                dd_pcts_sq = []
+                for v in values:
+                    if v > peak_val2:
+                        peak_val2 = v
+                    dd_pct = ((v / peak_val2) - 1.0) * 100.0 if peak_val2 > 0 else 0.0  # negative or 0
+                    if dd_pct < 0:
+                        dd_pcts_sq.append(dd_pct * dd_pct)
+                if dd_pcts_sq:
+                    import math
+                    ulcer_index = math.sqrt(sum(dd_pcts_sq) / len(dd_pcts_sq))
+        except Exception as e:
+            logger.warning("Failed to calculate Ulcer index", error=str(e))
+
         # Calculate CAGR
         cagr = ((final_capital / initial_capital) ** (1 / trading_period_years) - 1) * 100 if trading_period_years > 0 and initial_capital > 0 else 0
         
@@ -475,6 +511,15 @@ async def calculate_metrics_for_backtest(request: dict):
 
         # Rolling Beta vs benchmark price returns
         rolling_beta = {"dates": [], "beta_6mo": [], "beta_12mo": []}
+        # Scalar attribution metrics defaults
+        alpha_capm = 0.0
+        beta_capm = 0.0
+        r_squared = 0.0
+        tracking_error = 0.0
+        up_capture = 0.0
+        down_capture = 0.0
+        treynor_ratio = 0.0
+
         if prices and len(prices) > 1:
             bench_returns = [(prices[i] - prices[i-1]) / prices[i-1] if prices[i-1] != 0 else 0 for i in range(1, len(prices))]
             # Align lengths between returns and bench_returns
@@ -502,6 +547,35 @@ async def calculate_metrics_for_backtest(request: dict):
             beta6_full = [None]*pad_len + b6
             beta12_full = [None]*pad_len + b12
             rolling_beta = {"dates": dates, "beta_6mo": beta6_full, "beta_12mo": beta12_full}
+
+            # CAPM alpha/beta and attribution metrics
+            if n > 2:
+                mean_p = sum(pr)/n
+                mean_b = sum(br)/n
+                cov_pb = sum((pr[i]-mean_p)*(br[i]-mean_b) for i in range(n)) / n
+                var_b = sum((br[i]-mean_b)**2 for i in range(n)) / n
+                var_p = sum((pr[i]-mean_p)**2 for i in range(n)) / n
+                beta_capm = (cov_pb/var_b) if var_b > 0 else 0.0
+                alpha_capm = mean_p - beta_capm*mean_b
+                r_squared = (cov_pb**2)/(var_b*var_p) if (var_b>0 and var_p>0) else 0.0
+                # Tracking error: std dev of active returns (p - b)
+                active = [pr[i]-br[i] for i in range(n)]
+                mean_active = sum(active)/n
+                te_var = sum((a-mean_active)**2 for a in active) / n
+                tracking_error = math.sqrt(te_var)
+                # Capture ratios
+                up_idx = [i for i,x in enumerate(br) if x > 0]
+                down_idx = [i for i,x in enumerate(br) if x < 0]
+                if up_idx:
+                    avg_p_up = sum(pr[i] for i in up_idx)/len(up_idx)
+                    avg_b_up = sum(br[i] for i in up_idx)/len(up_idx)
+                    up_capture = (avg_p_up/avg_b_up) if avg_b_up != 0 else 0.0
+                if down_idx:
+                    avg_p_dn = sum(pr[i] for i in down_idx)/len(down_idx)
+                    avg_b_dn = sum(br[i] for i in down_idx)/len(down_idx)
+                    down_capture = (avg_p_dn/avg_b_dn) if avg_b_dn != 0 else 0.0
+                # Treynor ratio: mean excess return over beta (risk-free=0)
+                treynor_ratio = (mean_p/beta_capm) if beta_capm not in (0, None) else 0.0
 
         # Trade return histogram (new format)
         histogram = {"histogram_data": []}
@@ -539,6 +613,8 @@ async def calculate_metrics_for_backtest(request: dict):
             "sharpe_ratio": sharpe_ratio * 100,  # Annualized percentage
             "sortino_ratio": sortino_ratio * 100,
             "calmar_ratio": calmar_ratio,
+            "sterling_ratio": sterling_ratio,
+            "ulcer_index": ulcer_index,
             "information_ratio": information_ratio,
             
             # Risk metrics  
@@ -591,7 +667,16 @@ async def calculate_metrics_for_backtest(request: dict):
             "rolling_volatility": rolling_volatility,
             "rolling_sharpe": rolling_sharpe,
             "rolling_beta": rolling_beta,
-            "trade_return_histogram": histogram
+            "trade_return_histogram": histogram,
+            
+            # Attribution metrics (scalars)
+            "alpha": alpha_capm,
+            "beta": beta_capm,
+            "r_squared": r_squared,
+            "tracking_error": tracking_error,
+            "up_capture": up_capture,
+            "down_capture": down_capture,
+            "treynor_ratio": treynor_ratio
         }
         
         logger.info("✅ ANALYTICS SERVICE: Metrics calculated successfully", 

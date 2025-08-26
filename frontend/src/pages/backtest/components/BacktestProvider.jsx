@@ -178,6 +178,8 @@ export const BacktestProvider = ({ children }) => {
             sharpe_ratio: results.sharpe_ratio,
             sortino_ratio: results.sortino_ratio,
             calmar_ratio: results.calmar_ratio,
+            sterling_ratio: results.sterling_ratio,
+            ulcer_index: results.ulcer_index,
             total_trades: results.total_trades,
             
             // Trade analysis metrics from backend
@@ -212,7 +214,15 @@ export const BacktestProvider = ({ children }) => {
             turnover_ratio: 0, // Not calculated in backend yet
             trades_per_day: results.total_periods > 0 ? results.total_trades / results.total_periods : 0,
             capacity: 1000000, // Placeholder value
-            kelly_criterion: 0 // Not calculated in backend yet
+            kelly_criterion: results.kelly_criterion,
+            // Advanced attribution metrics from backend
+            alpha: results.alpha || 0,
+            beta: results.beta || 0,
+            treynor_ratio: results.treynor_ratio || 0,
+            tracking_error: results.tracking_error || 0,
+            r_squared: results.r_squared || 0,
+            up_capture: results.up_capture || 0,
+            down_capture: results.down_capture || 0
           },
           advanced_metrics: {
             sortino_ratio: results.sortino_ratio,

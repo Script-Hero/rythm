@@ -75,6 +75,8 @@ class BacktestResults(BaseModel):
     sharpe_ratio: Optional[float] = None
     sortino_ratio: Optional[float] = None
     calmar_ratio: Optional[float] = None
+    sterling_ratio: Optional[float] = None
+    ulcer_index: Optional[float] = None
     information_ratio: Optional[float] = None
     volatility: Optional[float] = None
     
@@ -126,6 +128,15 @@ class BacktestResults(BaseModel):
     rolling_sharpe: Optional[Dict[str, Any]] = None
     rolling_beta: Optional[Dict[str, Any]] = None
     trade_return_histogram: Optional[Dict[str, Any]] = None
+
+    # Attribution metrics
+    alpha: Optional[float] = None
+    beta: Optional[float] = None
+    r_squared: Optional[float] = None
+    tracking_error: Optional[float] = None
+    treynor_ratio: Optional[float] = None
+    up_capture: Optional[float] = None
+    down_capture: Optional[float] = None
     
     class Config:
         json_encoders = {

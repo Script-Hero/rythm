@@ -220,6 +220,8 @@ class DatabaseService:
                         'sharpe_ratio': results.sharpe_ratio,
                         'sortino_ratio': results.sortino_ratio,
                         'calmar_ratio': results.calmar_ratio,
+                        'sterling_ratio': results.sterling_ratio,
+                        'ulcer_index': results.ulcer_index,
                         'information_ratio': results.information_ratio,
                         
                         # Risk metrics
@@ -272,6 +274,15 @@ class DatabaseService:
                         'rolling_sharpe': results.rolling_sharpe,
                         'rolling_beta': results.rolling_beta,
                         'trade_return_histogram': results.trade_return_histogram
+                        ,
+                        # Attribution metrics
+                        'alpha': results.alpha,
+                        'beta': results.beta,
+                        'r_squared': results.r_squared,
+                        'tracking_error': results.tracking_error,
+                        'treynor_ratio': results.treynor_ratio,
+                        'up_capture': results.up_capture,
+                        'down_capture': results.down_capture
                     }),
                     results.execution_time_ms
                 )
@@ -344,6 +355,8 @@ class DatabaseService:
                     sharpe_ratio=analytics.get('sharpe_ratio', row['sharpe_ratio']),
                     sortino_ratio=analytics.get('sortino_ratio', 0.0),
                     calmar_ratio=analytics.get('calmar_ratio', 0.0),
+                    sterling_ratio=analytics.get('sterling_ratio', 0.0),
+                    ulcer_index=analytics.get('ulcer_index', 0.0),
                     information_ratio=analytics.get('information_ratio', 0.0),
                     volatility=analytics.get('volatility', 0.0),
                     cagr=analytics.get('cagr', 0.0),
@@ -381,7 +394,15 @@ class DatabaseService:
                     rolling_volatility=analytics.get('rolling_volatility'),
                     rolling_sharpe=analytics.get('rolling_sharpe'),
                     rolling_beta=analytics.get('rolling_beta'),
-                    trade_return_histogram=analytics.get('trade_return_histogram')
+                    trade_return_histogram=analytics.get('trade_return_histogram'),
+                    # Attribution metrics
+                    alpha=analytics.get('alpha'),
+                    beta=analytics.get('beta'),
+                    r_squared=analytics.get('r_squared'),
+                    tracking_error=analytics.get('tracking_error'),
+                    treynor_ratio=analytics.get('treynor_ratio'),
+                    up_capture=analytics.get('up_capture'),
+                    down_capture=analytics.get('down_capture')
                 )
                 
                 # Try to retrieve chart_data from Redis cache
@@ -962,6 +983,8 @@ class BacktestEngine:
         sortino_ratio = analytics_data.get("sortino_ratio", 0.0) / 100.0
         calmar_ratio = analytics_data.get("calmar_ratio", 0.0)
         information_ratio = analytics_data.get("information_ratio", 0.0) / 100.0
+        sterling_ratio = analytics_data.get("sterling_ratio", 0.0)
+        ulcer_index = analytics_data.get("ulcer_index", 0.0)
         
         # Risk metrics
         max_drawdown_value = analytics_data.get("max_drawdown", 0.0)
@@ -1027,6 +1050,8 @@ class BacktestEngine:
             sharpe_ratio=sharpe_ratio,
             sortino_ratio=sortino_ratio,
             calmar_ratio=calmar_ratio,
+            sterling_ratio=sterling_ratio,
+            ulcer_index=ulcer_index,
             information_ratio=information_ratio,
             volatility=volatility,
             cagr=cagr,
@@ -1064,7 +1089,15 @@ class BacktestEngine:
             rolling_volatility=analytics_data.get("rolling_volatility"),
             rolling_sharpe=analytics_data.get("rolling_sharpe"),
             rolling_beta=analytics_data.get("rolling_beta"),
-            trade_return_histogram=analytics_data.get("trade_return_histogram")
+            trade_return_histogram=analytics_data.get("trade_return_histogram"),
+            # Attribution metrics
+            alpha=analytics_data.get("alpha"),
+            beta=analytics_data.get("beta"),
+            r_squared=analytics_data.get("r_squared"),
+            tracking_error=analytics_data.get("tracking_error"),
+            treynor_ratio=analytics_data.get("treynor_ratio"),
+            up_capture=analytics_data.get("up_capture"),
+            down_capture=analytics_data.get("down_capture")
         )
     
     async def _calculate_analytics_via_service(
