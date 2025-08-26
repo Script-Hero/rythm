@@ -611,27 +611,41 @@ class BacktestEngine:
                     "execution_graph": {}  # TODO: Build execution graph if needed
                 }
                 strategy_executor = self._create_strategy_executor(executor_data)
-                logger.info("✅ Using compiled strategy for backtest", 
-                           node_count=len(nodes),
-                           edge_count=len(edges),
-                           execution_order=execution_order)
+                logger.warning("✅ STRATEGY EXECUTOR CREATED", 
+                              node_count=len(nodes),
+                              edge_count=len(edges),
+                              execution_order=execution_order,
+                              executor_available=bool(strategy_executor))
             else:
                 # No fallback - strategy compilation failed
                 strategy_executor = None
-                logger.error("❌ Strategy compilation failed - missing required data",
+                logger.error("❌ STRATEGY COMPILATION FAILED - missing required data",
                              has_strategy_data=bool(strategy_data),
                              has_nodes=bool(nodes),
                              has_execution_order=bool(execution_order),
-                             strategy_data_keys=list(strategy_data.keys()) if strategy_data else [])
+                             strategy_data_keys=list(strategy_data.keys()) if strategy_data else [],
+                             nodes_count=len(nodes) if nodes else 0,
+                             execution_order_length=len(execution_order) if execution_order else 0)
                 
         except Exception as e:
             logger.error("Failed to initialize strategy engine", error=str(e))
             strategy_executor = None
         
         # Execute strategy on each data point
+        logger.warning("🚀 STARTING BACKTEST EXECUTION", 
+                      total_bars=len(data),
+                      strategy_executor_available=bool(strategy_executor),
+                      first_bar_sample=data[0] if data else None)
+        
         for i, bar in enumerate(data):
             current_price = float(bar.get("close", 50000))
             timestamp = bar.get("timestamp", datetime.utcnow())
+            
+            if i < 3 or i == len(data) - 1:  # Log first 3 and last bar
+                logger.warning(f"🔍 BAR {i}", 
+                              bar=bar,
+                              current_price=current_price,
+                              timestamp=timestamp)
             
             # Convert timestamp if needed
             if isinstance(timestamp, str):
@@ -642,14 +656,26 @@ class BacktestEngine:
             elif not isinstance(timestamp, datetime):
                 timestamp = datetime.fromtimestamp(float(timestamp))
             
-            # Prepare market data for strategy
+            # Prepare market data for strategy - ensure all numeric values are properly converted
+            try:
+                open_price = float(bar.get('open', current_price))
+                high_price = float(bar.get('high', current_price))
+                low_price = float(bar.get('low', current_price))
+                volume_value = float(bar.get('volume', 1000))
+            except (ValueError, TypeError) as e:
+                logger.warning("Data conversion error", bar=bar, error=str(e))
+                open_price = current_price
+                high_price = current_price 
+                low_price = current_price
+                volume_value = 1000.0
+                
             market_data = {
                 'price': current_price,
-                'open': float(bar.get('open', current_price)),
-                'high': float(bar.get('high', current_price)),
-                'low': float(bar.get('low', current_price)),
+                'open': open_price,
+                'high': high_price,
+                'low': low_price,
                 'close': current_price,
-                'volume': float(bar.get('volume', 1000)),
+                'volume': volume_value,
                 'timestamp': timestamp,
                 'symbol': job.request.symbol
             }
@@ -658,7 +684,22 @@ class BacktestEngine:
             signals = []
             if strategy_executor:
                 try:
+                    if i < 15 or signals:  # Debug first 15 bars (enough for SMA buildup) + any with signals
+                        logger.warning("🎯 EXECUTING STRATEGY", 
+                                      bar_index=i,
+                                      market_data=market_data,
+                                      strategy_nodes=len(strategy_executor.nodes),
+                                      execution_order=strategy_executor.execution_order)
+                    
                     signals = strategy_executor.execute(market_data)
+                    
+                    if signals or i < 15 or i == len(data) - 1:  # Always log signals, plus first 15 bars
+                        logger.warning("🎯 STRATEGY EXECUTION RESULT", 
+                                      bar_index=i,
+                                      signals_generated=len(signals) if signals else 0,
+                                      signals=signals,
+                                      current_price=current_price)
+                               
                 except Exception as e:
                     logger.error("Strategy execution error", error=str(e), bar_index=i)
                     signals = []
@@ -671,7 +712,7 @@ class BacktestEngine:
             for signal in signals:
                 action = signal.get('action', '').lower()
                 signal_price = float(signal.get('price', current_price))
-                size = float(signal.get('size', 0))
+                size = float(signal.get('quantity', 0))
                 
                 if action == 'buy' and cash > 0:
                     # Calculate position size

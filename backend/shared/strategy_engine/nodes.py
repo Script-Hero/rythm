@@ -87,24 +87,40 @@ class PriceNode(Node):
                    inputs_received=list(inputs.keys()),
                    inputs_content={k: str(v) for k, v in inputs.items()})
         
-        symbol = self.data.get("symbol", "BACKTEST_DATA")
+        # Get market data from inputs (passed by backtesting/forward testing engine)
+        market_data = inputs.get("market_data")
+        if market_data:
+            # Only price type is configurable in the node - symbol/interval chosen at test level
+            price_type = self.data.get("priceType", "close")
+            
+            # Extract price based on type
+            if price_type == "close":
+                price_value = market_data.get("close", market_data.get("price", 0))
+            elif price_type == "open":
+                price_value = market_data.get("open", market_data.get("price", 0))
+            elif price_type == "high":
+                price_value = market_data.get("high", market_data.get("price", 0))
+            elif price_type == "low":
+                price_value = market_data.get("low", market_data.get("price", 0))
+            else:
+                price_value = market_data.get("price", market_data.get("close", 0))
+            
+            result = {"price-out": Decimal(str(price_value))}
+            logger.info("💰 PriceNode using market data", 
+                       price_type=price_type,
+                       price_value=price_value,
+                       result=result)
+            return result
+        
+        # Fallback for compilation testing - use mock data
         price_type = self.data.get("priceType", "close")
         
-        logger.info("💰 PriceNode configuration", 
-                   symbol=symbol,
+        logger.info("💰 PriceNode using fallback for compilation test", 
                    price_type=price_type,
                    node_data=self.data)
         
-        # In microservices, this will get data from Market Data Service
-        # For now, return mock data for compilation testing
-        if symbol == "BACKTEST_DATA":
-            result = {"price-out": Decimal('100.0')}
-            logger.info("💰 PriceNode returning mock data", result=result)
-            return result
-        
-        # This would be replaced with actual market data call
         result = {"price-out": Decimal('100.0')}
-        logger.info("💰 PriceNode returning default data", result=result)
+        logger.info("💰 PriceNode returning mock data for compilation", result=result)
         return result
 
 
@@ -119,13 +135,22 @@ class VolumeNode(Node):
                    inputs_received=list(inputs.keys()),
                    inputs_content={k: str(v) for k, v in inputs.items()})
         
-        symbol = self.data.get("symbol", "BACKTEST_DATA")
-        logger.info("📊 VolumeNode configuration", 
-                   symbol=symbol,
+        # Get market data from inputs (passed by backtesting/forward testing engine)
+        market_data = inputs.get("market_data")
+        if market_data:
+            volume_value = market_data.get("volume", 0)
+            result = {"volume-out": Decimal(str(volume_value))}
+            logger.info("📊 VolumeNode using market data", 
+                       volume_value=volume_value,
+                       result=result)
+            return result
+        
+        # Fallback for compilation testing - use mock data
+        logger.info("📊 VolumeNode using fallback for compilation test", 
                    node_data=self.data)
         
         result = {"volume-out": Decimal('1000.0')}
-        logger.info("📊 VolumeNode returning data", result=result)
+        logger.info("📊 VolumeNode returning mock data for compilation", result=result)
         return result
 
 
