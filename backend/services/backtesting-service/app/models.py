@@ -109,10 +109,23 @@ class BacktestResults(BaseModel):
     
     # Trade history
     trades: List[TradeResult] = Field(default_factory=list)
-    
+
     # Metadata
     execution_time_ms: int
     total_periods: int
+
+    # Analytics timeseries for frontend charts (optional)
+    cumulative_returns: Optional[Dict[str, Any]] = None
+    daily_returns: Optional[Dict[str, Any]] = None
+    monthly_returns: Optional[Dict[str, Any]] = None
+    annual_returns: Optional[Dict[str, Any]] = None
+    average_annual_return: Optional[float] = None
+    drawdown: Optional[Dict[str, Any]] = None
+    underwater_curve: Optional[Dict[str, Any]] = None
+    rolling_volatility: Optional[Dict[str, Any]] = None
+    rolling_sharpe: Optional[Dict[str, Any]] = None
+    rolling_beta: Optional[Dict[str, Any]] = None
+    trade_return_histogram: Optional[Dict[str, Any]] = None
     
     class Config:
         json_encoders = {

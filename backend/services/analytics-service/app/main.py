@@ -192,7 +192,16 @@ async def calculate_metrics_for_backtest(request: dict):
         logger.info("🧮 ANALYTICS SERVICE: Starting full analytics calculation")
         
         # Calculate basic metrics from portfolio values
-        values = [pv["value"] for pv in portfolio_values]
+        values = [float(pv["value"]) for pv in portfolio_values]
+        dates = [int(pv.get("timestamp", i)) for i, pv in enumerate(portfolio_values)]
+        # Ensure timestamps are in ms for frontend charts
+        dates = [ts if ts >= 1_000_000_000_000 else ts * 1000 for ts in dates]
+        
+        # Optional price series for benchmark/beta
+        price_series = request.get("price_series", []) or []
+        price_dates = [int(p.get("timestamp", i)) for i, p in enumerate(price_series)]
+        price_dates = [ts if ts >= 1_000_000_000_000 else ts * 1000 for ts in price_dates]
+        prices = [float(p.get("close", 0)) for p in price_series]
         logger.info("📈 ANALYTICS SERVICE: Portfolio values extracted",
                    values_count=len(values),
                    values_sample=values[:5] if values else [],
@@ -229,8 +238,9 @@ async def calculate_metrics_for_backtest(request: dict):
         
         # Simple volatility (standard deviation of returns)
         logger.info("📊 ANALYTICS SERVICE: Starting volatility calculation")
+        returns = []
         if len(values) > 1:
-            returns = [(values[i] - values[i-1]) / values[i-1] for i in range(1, len(values)) if values[i-1] != 0]
+            returns = [(values[i] - values[i-1]) / values[i-1] if values[i-1] != 0 else 0 for i in range(1, len(values))]
             logger.info("📊 ANALYTICS SERVICE: Returns calculated",
                        returns_count=len(returns),
                        returns_sample=returns[:5] if returns else [],
@@ -338,16 +348,189 @@ async def calculate_metrics_for_backtest(request: dict):
         avg_loss = gross_loss / len(losing_trades) if losing_trades else 0
         win_loss_ratio = avg_win / avg_loss if avg_loss > 0 else 0
         expectancy = avg_trade_pnl
-        
+
         # Calculate capacity and turnover estimates
         avg_portfolio_value = (initial_capital + final_capital) / 2
         total_volume = sum(abs(t.get("pnl", 0)) for t in trades) * 20  # Rough volume estimate
         turnover_ratio = (total_volume / avg_portfolio_value) if avg_portfolio_value > 0 else 0
         trades_per_day = len(trades) / max(trading_period_years * 252, 1)
         capacity_estimate = min(avg_portfolio_value * (1 - trades_per_day * 0.01), 100_000_000)  # Simple capacity model
-        
+
         # Information ratio (using Sharpe as proxy)
         information_ratio = sharpe_ratio * 100
+
+        # ------------------ Timeseries datasets for frontend charts ------------------
+        # Cumulative returns (strategy) vs simple benchmark from price_series (if available)
+        cumulative_returns = {}
+        if values:
+            base = values[0] if values[0] != 0 else 1.0
+            backtest_curve = [(v / base) - 1.0 for v in values]
+            if prices and prices[0] != 0:
+                bench_base = prices[0]
+                benchmark_curve = [(p / bench_base) - 1.0 for p in prices]
+                # Align lengths by trimming to min length
+                n = min(len(dates), len(backtest_curve), len(benchmark_curve))
+                cumulative_returns = {
+                    "dates": dates[:n],
+                    "backtest": backtest_curve[:n],
+                    "benchmark": benchmark_curve[:n]
+                }
+            else:
+                cumulative_returns = {"dates": dates, "backtest": backtest_curve, "benchmark": [0.0] * len(dates)}
+
+        # Daily returns series
+        daily_returns = {"dates": dates[1:], "returns": returns} if returns else {"dates": [], "returns": []}
+
+        # Drawdown / underwater
+        underwater = []
+        if values:
+            peak = values[0]
+            for v in values:
+                if v > peak: peak = v
+                underwater.append((v / peak) - 1.0 if peak > 0 else 0.0)
+        drawdown = {
+            "drawdown_series": {"dates": dates, "drawdowns": underwater},
+            "top_drawdowns": []
+        } if underwater else {"drawdown_series": {"dates": [], "drawdowns": []}, "top_drawdowns": []}
+        underwater_curve = {"dates": dates, "underwater": underwater} if underwater else {"dates": [], "underwater": []}
+
+        # Monthly and annual returns
+        monthly_returns = {}
+        annual_returns = {}
+        if values and dates:
+            from collections import defaultdict
+            month_map = defaultdict(lambda: defaultdict(float))  # month -> year -> return
+            # Track first/last per (year,month) and per year
+            first_by_month = {}
+            last_by_month = {}
+            first_by_year = {}
+            last_by_year = {}
+            for v, ts in zip(values, dates):
+                d = __import__('datetime').datetime.utcfromtimestamp(ts / 1000)
+                y, m = d.year, d.month
+                key = (y, m)
+                if key not in first_by_month:
+                    first_by_month[key] = v
+                last_by_month[key] = v
+                if y not in first_by_year:
+                    first_by_year[y] = v
+                last_by_year[y] = v
+            # Month name mapping
+            month_names = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
+            for (y, m), fval in first_by_month.items():
+                lval = last_by_month[(y, m)]
+                ret = (lval / fval) - 1.0 if fval > 0 else 0.0
+                mn = month_names[m-1]
+                if mn not in monthly_returns:
+                    monthly_returns[mn] = {}
+                monthly_returns[mn][str(y)] = ret
+            for y, fval in first_by_year.items():
+                lval = last_by_year[y]
+                annual_returns[str(y)] = (lval / fval) - 1.0 if fval > 0 else 0.0
+        average_annual_return = (sum(annual_returns.values()) / len(annual_returns)) if annual_returns else 0.0
+
+        # Rolling volatility (3/6/12 months ~ 63/126/252 trading days)
+        def rolling_std(data, window):
+            out = [None] * len(data)
+            if window <= 1:
+                return [abs(x) for x in data]
+            import math
+            for i in range(window-1, len(data)):
+                seg = data[i-window+1:i+1]
+                mean = sum(seg) / len(seg)
+                var = sum((x-mean)**2 for x in seg) / len(seg)
+                out[i] = math.sqrt(var)
+            return out
+        vol3 = rolling_std(returns, 63) if returns else []
+        vol6 = rolling_std(returns, 126) if returns else []
+        vol12 = rolling_std(returns, 252) if returns else []
+        # Align to dates by adding a leading None to match len(dates)
+        def align(series):
+            return [None] + series if series else []
+        rolling_volatility = {
+            "dates": dates,
+            "volatility_3mo": align(vol3),
+            "volatility_6mo": align(vol6),
+            "volatility_12mo": align(vol12)
+        } if returns else {"dates": [], "volatility_3mo": [], "volatility_6mo": [], "volatility_12mo": []}
+
+        # Rolling Sharpe (annualized) using sqrt(252)
+        def rolling_sharpe_calc(data, window):
+            out = [None] * len(data)
+            import math
+            for i in range(window-1, len(data)):
+                seg = data[i-window+1:i+1]
+                mean = sum(seg) / len(seg)
+                var = sum((x-mean)**2 for x in seg) / len(seg)
+                std = math.sqrt(var)
+                out[i] = (mean / std) * math.sqrt(252) if std > 0 else 0.0
+            return out
+        sh6 = rolling_sharpe_calc(returns, 126) if returns else []
+        sh12 = rolling_sharpe_calc(returns, 252) if returns else []
+        rolling_sharpe = {
+            "dates": dates,
+            "sharpe_6mo": align(sh6),
+            "sharpe_12mo": align(sh12)
+        } if returns else {"dates": [], "sharpe_6mo": [], "sharpe_12mo": []}
+
+        # Rolling Beta vs benchmark price returns
+        rolling_beta = {"dates": [], "beta_6mo": [], "beta_12mo": []}
+        if prices and len(prices) > 1:
+            bench_returns = [(prices[i] - prices[i-1]) / prices[i-1] if prices[i-1] != 0 else 0 for i in range(1, len(prices))]
+            # Align lengths between returns and bench_returns
+            n = min(len(returns), len(bench_returns))
+            pr = returns[:n]
+            br = bench_returns[:n]
+            import math
+            def rolling_beta_calc(x, y, window):
+                out = [None] * len(x)
+                for i in range(window-1, len(x)):
+                    xs = x[i-window+1:i+1]
+                    ys = y[i-window+1:i+1]
+                    meanx = sum(xs)/window
+                    meany = sum(ys)/window
+                    cov = sum((xs[j]-meanx)*(ys[j]-meany) for j in range(window))/window
+                    var = sum((ys[j]-meany)**2 for j in range(window))/window
+                    out[i] = (cov/var) if var > 0 else 0.0
+                return out
+            b6 = rolling_beta_calc(pr, br, 126)
+            b12 = rolling_beta_calc(pr, br, 252)
+            # Dates align to returns dates (skip first element alignment like above)
+            rb_dates = dates[1:1+len(pr)]
+            # Pad to full dates length
+            pad_len = len(dates) - len(rb_dates)
+            beta6_full = [None]*pad_len + b6
+            beta12_full = [None]*pad_len + b12
+            rolling_beta = {"dates": dates, "beta_6mo": beta6_full, "beta_12mo": beta12_full}
+
+        # Trade return histogram (new format)
+        histogram = {"histogram_data": []}
+        if trades:
+            # Normalize trade pnl by initial_capital to a return
+            rets = [(t.get("pnl", 0) / initial_capital) if initial_capital else 0 for t in trades]
+            if rets:
+                mn, mx = min(rets), max(rets)
+                bins = max(10, min(30, len(rets)//2 or 10))
+                width = (mx - mn) if (mx - mn) != 0 else 1.0
+                # Build bins on return scale
+                edges = [mn + (i*width)/bins for i in range(bins+1)]
+                freqs = [0]*(bins)
+                for r in rets:
+                    idx = int((r - mn) / width * bins)
+                    if idx >= bins: idx = bins-1
+                    if idx < 0: idx = 0
+                    freqs[idx] += 1
+                data = []
+                for i in range(bins):
+                    r0, r1 = edges[i], edges[i+1]
+                    label = f"{r0*100:.2f}% to {r1*100:.2f}%"
+                    data.append({
+                        "range_start": r0,
+                        "range_end": r1,
+                        "range_label": label,
+                        "frequency": freqs[i]
+                    })
+                histogram = {"histogram_data": data}
         
         metrics = {
             # Performance metrics
@@ -395,7 +578,20 @@ async def calculate_metrics_for_backtest(request: dict):
             "capacity": capacity_estimate,
             "runtime_days": trading_period_years * 365.25,
             "runtime_years": trading_period_years,
-            "total_periods": len(values)
+            "total_periods": len(values),
+            
+            # Timeseries datasets
+            "cumulative_returns": cumulative_returns,
+            "daily_returns": daily_returns,
+            "monthly_returns": monthly_returns,
+            "annual_returns": annual_returns,
+            "average_annual_return": average_annual_return,
+            "drawdown": drawdown,
+            "underwater_curve": underwater_curve,
+            "rolling_volatility": rolling_volatility,
+            "rolling_sharpe": rolling_sharpe,
+            "rolling_beta": rolling_beta,
+            "trade_return_histogram": histogram
         }
         
         logger.info("✅ ANALYTICS SERVICE: Metrics calculated successfully", 

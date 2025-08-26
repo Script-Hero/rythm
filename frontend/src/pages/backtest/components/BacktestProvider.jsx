@@ -155,7 +155,20 @@ export const BacktestProvider = ({ children }) => {
       if (result && result.results) {
         // Process the completed backtest results
         const { results } = result;
-        
+
+        // Pass through backend-provided analytics timeseries for charts
+        const cumulative_returns = results.cumulative_returns || {};
+        const daily_returns = results.daily_returns || {};
+        const monthly_returns = results.monthly_returns || {};
+        const annual_returns = results.annual_returns || {};
+        const average_annual_return = results.average_annual_return || 0;
+        const drawdown = results.drawdown || {};
+        const underwater_curve = results.underwater_curve || {};
+        const rolling_volatility = results.rolling_volatility || {};
+        const rolling_sharpe = results.rolling_sharpe || {};
+        const rolling_beta = results.rolling_beta || {};
+        const trade_return_histogram = results.trade_return_histogram || {};
+
         setBacktestResults({
           key_metrics: {
             // Core performance metrics
@@ -205,7 +218,18 @@ export const BacktestProvider = ({ children }) => {
             sortino_ratio: results.sortino_ratio,
             calmar_ratio: results.calmar_ratio,
             profit_factor: results.profit_factor
-          }
+          },
+          cumulative_returns,
+          daily_returns,
+          monthly_returns,
+          annual_returns,
+          average_annual_return,
+          drawdown,
+          underwater_curve,
+          rolling_volatility,
+          rolling_sharpe,
+          rolling_beta,
+          trade_return_histogram
         });
 
         // Convert chart data format

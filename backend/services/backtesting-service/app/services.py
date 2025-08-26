@@ -258,7 +258,20 @@ class DatabaseService:
                         'runtime_years': results.runtime_years,
                         
                         # Meta
-                        'total_periods': results.total_periods
+                        'total_periods': results.total_periods,
+                        
+                        # Timeseries datasets for frontend charts
+                        'cumulative_returns': results.cumulative_returns,
+                        'daily_returns': results.daily_returns,
+                        'monthly_returns': results.monthly_returns,
+                        'annual_returns': results.annual_returns,
+                        'average_annual_return': results.average_annual_return,
+                        'drawdown': results.drawdown,
+                        'underwater_curve': results.underwater_curve,
+                        'rolling_volatility': results.rolling_volatility,
+                        'rolling_sharpe': results.rolling_sharpe,
+                        'rolling_beta': results.rolling_beta,
+                        'trade_return_histogram': results.trade_return_histogram
                     }),
                     results.execution_time_ms
                 )
@@ -356,7 +369,19 @@ class DatabaseService:
                     chart_data=[],  # Will be populated from Redis cache below
                     trades=[],  # Not stored for retrieval
                     execution_time_ms=int(row['execution_time_ms'] or 0),
-                    total_periods=analytics.get('total_periods', 0)
+                    total_periods=analytics.get('total_periods', 0),
+                    # Timeseries datasets (if present in analytics JSON)
+                    cumulative_returns=analytics.get('cumulative_returns'),
+                    daily_returns=analytics.get('daily_returns'),
+                    monthly_returns=analytics.get('monthly_returns'),
+                    annual_returns=analytics.get('annual_returns'),
+                    average_annual_return=analytics.get('average_annual_return'),
+                    drawdown=analytics.get('drawdown'),
+                    underwater_curve=analytics.get('underwater_curve'),
+                    rolling_volatility=analytics.get('rolling_volatility'),
+                    rolling_sharpe=analytics.get('rolling_sharpe'),
+                    rolling_beta=analytics.get('rolling_beta'),
+                    trade_return_histogram=analytics.get('trade_return_histogram')
                 )
                 
                 # Try to retrieve chart_data from Redis cache
@@ -1027,7 +1052,19 @@ class BacktestEngine:
             chart_data=chart_data,
             trades=trades,
             execution_time_ms=execution_time_ms,
-            total_periods=total_periods
+            total_periods=total_periods,
+            # Timeseries datasets from analytics service
+            cumulative_returns=analytics_data.get("cumulative_returns"),
+            daily_returns=analytics_data.get("daily_returns"),
+            monthly_returns=analytics_data.get("monthly_returns"),
+            annual_returns=analytics_data.get("annual_returns"),
+            average_annual_return=analytics_data.get("average_annual_return"),
+            drawdown=analytics_data.get("drawdown"),
+            underwater_curve=analytics_data.get("underwater_curve"),
+            rolling_volatility=analytics_data.get("rolling_volatility"),
+            rolling_sharpe=analytics_data.get("rolling_sharpe"),
+            rolling_beta=analytics_data.get("rolling_beta"),
+            trade_return_histogram=analytics_data.get("trade_return_histogram")
         )
     
     async def _calculate_analytics_via_service(
@@ -1045,10 +1082,26 @@ class BacktestEngine:
             # Call analytics service for sophisticated calculations
             logger.info("📞 BACKTESTING SERVICE: Creating HTTP client for analytics service call")
             async with httpx.AsyncClient() as client:
+                # Build timestamps from chart_data (ms preferred by frontend charts)
+                ts_values = []
+                if chart_data:
+                    for p in chart_data:
+                        ts = float(p.get("Datetime", 0))
+                        ts_ms = int(ts * 1000) if ts < 1e12 else int(ts)
+                        ts_values.append(ts_ms)
+                else:
+                    # Fallback to indices if no chart_data timestamps available
+                    ts_values = list(range(len(equity_curve)))
+
                 analytics_request = {
                     "portfolio_values": [
-                        {"timestamp": i, "value": value} 
+                        {"timestamp": ts_values[i], "value": value}
                         for i, value in enumerate(equity_curve)
+                    ],
+                    "price_series": [
+                        {"timestamp": (int(float(p.get("Datetime", 0)) * 1000) if float(p.get("Datetime", 0)) < 1e12 else int(float(p.get("Datetime", 0)))),
+                         "close": float(p.get("Close", 0))}
+                        for p in chart_data
                     ],
                     "trades": [
                         {
