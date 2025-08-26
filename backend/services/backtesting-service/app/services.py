@@ -202,7 +202,8 @@ class DatabaseService:
                         max_drawdown = $5,
                         trade_count = $6,
                         win_rate = $7,
-                        analytics = $8
+                        analytics = $8,
+                        execution_time_ms = $9
                     WHERE id = $1
                 """,
                     job_id,
@@ -213,26 +214,53 @@ class DatabaseService:
                     results.total_trades,
                     results.win_rate,
                     json.dumps({
+                        # Performance metrics
                         'total_return_pct': results.total_return_percent,
+                        'cagr': results.cagr,
                         'sharpe_ratio': results.sharpe_ratio,
                         'sortino_ratio': results.sortino_ratio,
                         'calmar_ratio': results.calmar_ratio,
+                        'information_ratio': results.information_ratio,
+                        
+                        # Risk metrics
                         'max_drawdown_pct': results.max_drawdown_percent,
+                        'volatility': results.volatility,
+                        
+                        # Trading metrics
                         'win_rate': results.win_rate,
                         'total_trades': results.total_trades,
                         'winning_trades': results.winning_trades,
                         'losing_trades': results.losing_trades,
-                        'volatility': results.volatility,
                         'profit_factor': results.profit_factor,
+                        'consecutive_wins': results.consecutive_wins,
+                        'consecutive_losses': results.consecutive_losses,
+                        
+                        # Trade details
                         'gross_profit': float(results.gross_profit),
                         'gross_loss': float(results.gross_loss),
                         'net_profit': float(results.net_profit),
                         'average_trade': float(results.average_trade),
                         'largest_win': float(results.largest_win),
                         'largest_loss': float(results.largest_loss),
-                        'consecutive_wins': results.consecutive_wins,
-                        'consecutive_losses': results.consecutive_losses
-                    })
+                        
+                        # Derived metrics
+                        'avg_win': results.avg_win,
+                        'avg_loss': results.avg_loss,
+                        'win_loss_ratio': results.win_loss_ratio,
+                        'expectancy': results.expectancy,
+                        'kelly_criterion': results.kelly_criterion,
+                        
+                        # Capacity and frequency
+                        'turnover_ratio': results.turnover_ratio,
+                        'trades_per_day': results.trades_per_day,
+                        'capacity': results.capacity,
+                        'runtime_days': results.runtime_days,
+                        'runtime_years': results.runtime_years,
+                        
+                        # Meta
+                        'total_periods': results.total_periods
+                    }),
+                    results.execution_time_ms
                 )
                 
                 # Cache chart_data in Redis for 24 hours for recently completed backtests
@@ -247,6 +275,19 @@ class DatabaseService:
                         logger.info("Chart data cached in Redis", job_id=str(job_id), data_points=len(results.chart_data))
                     except Exception as e:
                         logger.warning("Failed to cache chart data in Redis", job_id=str(job_id), error=str(e))
+
+                # Cache trades in Redis for 24 hours (align with chart data caching pattern)
+                if results.trades and self._redis:
+                    try:
+                        trades_payload = [json.loads(trade.json()) for trade in results.trades]
+                        await self._redis.setex(
+                            f"backtest:trades:{job_id}",
+                            86400,
+                            json.dumps(trades_payload)
+                        )
+                        logger.info("Trades cached in Redis", job_id=str(job_id), trade_count=len(results.trades))
+                    except Exception as e:
+                        logger.warning("Failed to cache trades in Redis", job_id=str(job_id), error=str(e))
                 
                 logger.info("Backtest results stored successfully", job_id=str(job_id))
                 
@@ -263,7 +304,7 @@ class DatabaseService:
             async with self._pool.acquire() as conn:
                 row = await conn.fetchrow("""
                     SELECT final_balance, total_return, sharpe_ratio, max_drawdown,
-                           trade_count, win_rate, analytics, initial_balance
+                           trade_count, win_rate, analytics, initial_balance, execution_time_ms
                     FROM backtest_results 
                     WHERE id = $1
                 """, job_id)
@@ -290,7 +331,19 @@ class DatabaseService:
                     sharpe_ratio=analytics.get('sharpe_ratio', row['sharpe_ratio']),
                     sortino_ratio=analytics.get('sortino_ratio', 0.0),
                     calmar_ratio=analytics.get('calmar_ratio', 0.0),
+                    information_ratio=analytics.get('information_ratio', 0.0),
                     volatility=analytics.get('volatility', 0.0),
+                    cagr=analytics.get('cagr', 0.0),
+                    avg_win=analytics.get('avg_win', 0.0),
+                    avg_loss=analytics.get('avg_loss', 0.0),
+                    win_loss_ratio=analytics.get('win_loss_ratio', 0.0),
+                    expectancy=analytics.get('expectancy', 0.0),
+                    kelly_criterion=analytics.get('kelly_criterion', 0.0),
+                    turnover_ratio=analytics.get('turnover_ratio', 0.0),
+                    trades_per_day=analytics.get('trades_per_day', 0.0),
+                    capacity=analytics.get('capacity', 1000000.0),
+                    runtime_days=analytics.get('runtime_days', 0.0),
+                    runtime_years=analytics.get('runtime_years', 0.0),
                     gross_profit=Decimal(str(analytics.get('gross_profit', 0.0))),
                     gross_loss=Decimal(str(analytics.get('gross_loss', 0.0))),
                     net_profit=Decimal(str(analytics.get('net_profit', row['final_balance'] - row['initial_balance']))),
@@ -302,8 +355,8 @@ class DatabaseService:
                     consecutive_losses=analytics.get('consecutive_losses', 0),
                     chart_data=[],  # Will be populated from Redis cache below
                     trades=[],  # Not stored for retrieval
-                    execution_time_ms=0,  # Not stored
-                    total_periods=0  # Not stored
+                    execution_time_ms=int(row['execution_time_ms'] or 0),
+                    total_periods=analytics.get('total_periods', 0)
                 )
                 
                 # Try to retrieve chart_data from Redis cache
@@ -317,6 +370,20 @@ class DatabaseService:
                             logger.info("No cached chart data found for job", job_id=str(job_id))
                     except Exception as e:
                         logger.warning("Failed to retrieve chart data from Redis cache", job_id=str(job_id), error=str(e))
+
+                # Try to retrieve trades from Redis cache
+                if self._redis:
+                    try:
+                        trades_json = await self._redis.get(f"backtest:trades:{job_id}")
+                        if trades_json:
+                            from .models import TradeResult
+                            trades_list = json.loads(trades_json)
+                            results.trades = [TradeResult(**t) for t in trades_list]
+                            logger.info("Trades retrieved from Redis cache", job_id=str(job_id), trade_count=len(results.trades))
+                        else:
+                            logger.info("No cached trades found for job", job_id=str(job_id))
+                    except Exception as e:
+                        logger.warning("Failed to retrieve trades from Redis cache", job_id=str(job_id), error=str(e))
                 
                 return results
                 
@@ -856,34 +923,70 @@ class BacktestEngine:
             trades=trades,
             initial_capital=initial_capital,
             final_capital=final_portfolio_value,
-            chart_data=chart_data
+            chart_data=chart_data,
+            total_periods=total_periods
         )
         
-        # Extract metrics from analytics service (correct field names)
+        # Extract comprehensive metrics from analytics service
+        logger.info("📊 BACKTESTING SERVICE: Extracting metrics from analytics response")
+        
+        # Performance metrics
+        total_return_pct = analytics_data.get("total_return_pct", total_return_percent)
+        cagr = analytics_data.get("cagr", 0.0)
+        sharpe_ratio = analytics_data.get("sharpe_ratio", 0.0) / 100.0  # Convert from percentage
+        sortino_ratio = analytics_data.get("sortino_ratio", 0.0) / 100.0
+        calmar_ratio = analytics_data.get("calmar_ratio", 0.0)
+        information_ratio = analytics_data.get("information_ratio", 0.0) / 100.0
+        
+        # Risk metrics
         max_drawdown_value = analytics_data.get("max_drawdown", 0.0)
         max_drawdown_percent = analytics_data.get("max_drawdown_pct", 0.0)
-        sharpe_ratio = analytics_data.get("sharpe_ratio", 0.0)
-        volatility = analytics_data.get("volatility", 0.0)
+        volatility = analytics_data.get("volatility", 0.0) / 100.0  # Convert from percentage
+        
+        # Trading metrics
+        win_rate = analytics_data.get("win_rate", 0.0) / 100.0  # Convert to decimal
         profit_factor = analytics_data.get("profit_factor", 1.0)
-        win_rate = analytics_data.get("win_rate", 0.0) / 100.0  # Convert from percentage
+        total_trades_analytics = analytics_data.get("total_trades", len(trades))
+        winning_trades = analytics_data.get("winning_trades", len([t for t in trades if float(t.pnl) > 0]))
+        losing_trades = analytics_data.get("losing_trades", len([t for t in trades if float(t.pnl) < 0]))
+        
+        # Trade details
+        gross_profit = analytics_data.get("gross_profit", sum(float(t.pnl) for t in trades if float(t.pnl) > 0))
+        gross_loss = analytics_data.get("gross_loss", abs(sum(float(t.pnl) for t in trades if float(t.pnl) < 0)))
+        net_profit = analytics_data.get("net_profit", gross_profit - gross_loss)
         avg_trade_pnl = analytics_data.get("avg_trade_pnl", 0.0)
+        largest_win = analytics_data.get("largest_win", max((float(t.pnl) for t in trades if float(t.pnl) > 0), default=0.0))
+        largest_loss = analytics_data.get("largest_loss", min((float(t.pnl) for t in trades if float(t.pnl) < 0), default=0.0))
+        consecutive_wins = analytics_data.get("consecutive_wins", 0)
+        consecutive_losses = analytics_data.get("consecutive_losses", 0)
         
-        # Calculate winning/losing trades from local data (analytics service doesn't provide this breakdown)
-        winning_trades = len([t for t in trades if float(t.pnl) > 0])
-        losing_trades = len([t for t in trades if float(t.pnl) < 0])
-        gross_profit = sum(float(t.pnl) for t in trades if float(t.pnl) > 0)
-        gross_loss = abs(sum(float(t.pnl) for t in trades if float(t.pnl) < 0))
+        # Derived metrics
+        avg_win = analytics_data.get("avg_win", 0.0)
+        avg_loss = analytics_data.get("avg_loss", 0.0)
+        win_loss_ratio = analytics_data.get("win_loss_ratio", 0.0)
+        expectancy = analytics_data.get("expectancy", 0.0)
+        kelly_criterion = analytics_data.get("kelly_criterion", 0.0)
         
-        # Calculate additional metrics from trades
-        largest_win = max((float(t.pnl) for t in trades if float(t.pnl) > 0), default=0.0)
-        largest_loss = min((float(t.pnl) for t in trades if float(t.pnl) < 0), default=0.0)
+        # Portfolio metrics
+        initial_portfolio_value_analytics = analytics_data.get("initial_portfolio_value", initial_capital)
+        final_portfolio_value_analytics = analytics_data.get("final_portfolio_value", final_portfolio_value)
         
-        # Calculate consecutive wins/losses from actual trade sequence
-        consecutive_wins, consecutive_losses = self._calculate_consecutive_trades(trades)
+        # Capacity and frequency metrics
+        turnover_ratio = analytics_data.get("turnover_ratio", 0.0)
+        trades_per_day = analytics_data.get("trades_per_day", 0.0)
+        capacity_estimate = analytics_data.get("capacity", 1000000.0)  # Default $1M
+        runtime_days = analytics_data.get("runtime_days", total_periods)
+        runtime_years = analytics_data.get("runtime_years", total_periods / 252.0)
         
-        # Calculate Sortino and Calmar ratios
-        sortino_ratio = sharpe_ratio * 1.4 if sharpe_ratio else 0.0  # Approximation
-        calmar_ratio = abs(total_return_percent / max_drawdown_percent) if max_drawdown_percent != 0 else 0.0
+        logger.info("📊 BACKTESTING SERVICE: Comprehensive metrics extracted",
+                   sharpe_ratio=sharpe_ratio,
+                   sortino_ratio=sortino_ratio,
+                   calmar_ratio=calmar_ratio,
+                   kelly_criterion=kelly_criterion,
+                   profit_factor=profit_factor,
+                   win_rate=win_rate,
+                   consecutive_wins=consecutive_wins,
+                   consecutive_losses=consecutive_losses)
         
         return BacktestResults(
             total_trades=len(trades),
@@ -891,18 +994,30 @@ class BacktestEngine:
             losing_trades=losing_trades,
             win_rate=win_rate,
             total_return=Decimal(str(total_return)),
-            total_return_percent=total_return_percent,
+            total_return_percent=total_return_pct,  # Use analytics calculated value
             max_drawdown=Decimal(str(max_drawdown_value)),
             max_drawdown_percent=max_drawdown_percent,
-            final_portfolio_value=Decimal(str(final_portfolio_value)),
-            initial_portfolio_value=Decimal(str(initial_capital)),
+            final_portfolio_value=Decimal(str(final_portfolio_value_analytics)),
+            initial_portfolio_value=Decimal(str(initial_portfolio_value_analytics)),
             sharpe_ratio=sharpe_ratio,
             sortino_ratio=sortino_ratio,
             calmar_ratio=calmar_ratio,
+            information_ratio=information_ratio,
             volatility=volatility,
+            cagr=cagr,
+            avg_win=avg_win,
+            avg_loss=avg_loss,
+            win_loss_ratio=win_loss_ratio,
+            expectancy=expectancy,
+            kelly_criterion=kelly_criterion,
+            turnover_ratio=turnover_ratio,
+            trades_per_day=trades_per_day,
+            capacity=capacity_estimate,
+            runtime_days=runtime_days,
+            runtime_years=runtime_years,
             gross_profit=Decimal(str(gross_profit)),
             gross_loss=Decimal(str(gross_loss)),
-            net_profit=Decimal(str(gross_profit - gross_loss)),
+            net_profit=Decimal(str(net_profit)),
             profit_factor=profit_factor,
             average_trade=Decimal(str(avg_trade_pnl)),
             largest_win=Decimal(str(largest_win)),
@@ -921,7 +1036,8 @@ class BacktestEngine:
         trades: List,
         initial_capital: float,
         final_capital: float,
-        chart_data: List[Dict[str, Any]]
+        chart_data: List[Dict[str, Any]],
+        total_periods: int
     ) -> Dict[str, Any]:
         """Calculate analytics using the analytics service."""
         logger.info("🎯 BACKTESTING SERVICE: Starting analytics service call")
@@ -938,12 +1054,19 @@ class BacktestEngine:
                         {
                             "trade_id": trade.trade_id,
                             "pnl": float(trade.pnl),
-                            "timestamp": trade.timestamp.isoformat() if trade.timestamp else None
+                            "timestamp": trade.timestamp.isoformat() if trade.timestamp else None,
+                            "side": trade.side,
+                            "quantity": float(trade.quantity),
+                            "price": float(trade.price),
+                            "commission": float(trade.commission)
                         }
-                        for trade in trades
+                        # Only send realized PnL trades to analytics (align with other metrics)
+                        for trade in trades if float(trade.pnl) != 0.0
                     ],
                     "initial_capital": initial_capital,
-                    "final_capital": final_capital
+                    "final_capital": final_capital,
+                    "trading_period_days": total_periods,
+                    "chart_data_points": len(chart_data)
                 }
                 
                 logger.info("📊 BACKTESTING SERVICE: Prepared analytics request",

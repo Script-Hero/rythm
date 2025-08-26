@@ -75,7 +75,21 @@ class BacktestResults(BaseModel):
     sharpe_ratio: Optional[float] = None
     sortino_ratio: Optional[float] = None
     calmar_ratio: Optional[float] = None
+    information_ratio: Optional[float] = None
     volatility: Optional[float] = None
+    
+    # Additional metrics for frontend compatibility
+    cagr: Optional[float] = None
+    avg_win: Optional[float] = None
+    avg_loss: Optional[float] = None
+    win_loss_ratio: Optional[float] = None
+    expectancy: Optional[float] = None
+    kelly_criterion: Optional[float] = None
+    turnover_ratio: Optional[float] = None
+    trades_per_day: Optional[float] = None
+    capacity: Optional[float] = None
+    runtime_days: Optional[float] = None
+    runtime_years: Optional[float] = None
     
     # Profit/Loss metrics
     gross_profit: Decimal
