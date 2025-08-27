@@ -3,26 +3,14 @@ import { Handle, Position } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 
 function PriceNode({ data, id, updateNodeData }) {
-  const [symbol, setSymbol] = useState(data.symbol || 'AAPL');
   const [priceType, setPriceType] = useState(data.priceType || 'close');
 
   // Sync local state with prop data changes
-  useEffect(() => {
-    if (data.symbol !== undefined && data.symbol !== symbol) {
-      setSymbol(data.symbol);
-    }
-  }, [data.symbol, symbol]);
-
   useEffect(() => {
     if (data.priceType !== undefined && data.priceType !== priceType) {
       setPriceType(data.priceType);
     }
   }, [data.priceType, priceType]);
-
-  const handleSymbolChange = (newSymbol) => {
-    setSymbol(newSymbol);
-    updateNodeData?.(id, { symbol: newSymbol });
-  };
 
   const handlePriceTypeChange = (newPriceType) => {
     setPriceType(newPriceType);
@@ -35,17 +23,6 @@ function PriceNode({ data, id, updateNodeData }) {
       
       <div className="space-y-2">
         <div>
-          <label className="text-xs text-gray-600 block">Symbol</label>
-          <input
-            type="text"
-            value={symbol}
-            onChange={(e) => handleSymbolChange(e.target.value)}
-            className="w-full px-2 py-1 text-xs border rounded"
-            placeholder="AAPL"
-          />
-        </div>
-        
-        <div>
           <label className="text-xs text-gray-600 block">Price Type</label>
           <select
             value={priceType}
@@ -56,7 +33,6 @@ function PriceNode({ data, id, updateNodeData }) {
             <option value="high">High</option>
             <option value="low">Low</option>
             <option value="close">Close</option>
-            <option value="volume">Volume</option>
           </select>
         </div>
       </div>

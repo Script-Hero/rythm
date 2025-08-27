@@ -76,6 +76,21 @@ class Node(ABC):
 
 
 # Data Nodes
+@register_node("constantNode")
+class ConstantNode(Node):
+    inputs = ()
+    outputs = ("value-out",)
+
+    def compute(self, **inputs) -> Dict[str, Any]:
+        value = self.data.get("value", 0)
+        try:
+            # Normalize numeric to Decimal via string to preserve precision
+            numeric = Decimal(str(value))
+            return {"value-out": numeric}
+        except Exception:
+            # Fallback: return raw value (e.g., string constants)
+            return {"value-out": value}
+
 @register_node("priceNode")
 class PriceNode(Node):
     inputs = ()
@@ -899,7 +914,7 @@ def get_available_nodes() -> Dict[str, Dict[str, Any]]:
 
 def _get_node_category(node_type: str) -> str:
     """Categorize nodes for UI organization."""
-    if node_type in ["priceNode", "volumeNode", "timeNode"]:
+    if node_type in ["priceNode", "volumeNode", "timeNode", "constantNode"]:
         return "data"
     elif node_type in ["smaNode", "emaNode", "rsiNode", "macdNode", "bollingerBandsNode", 
                        "atrNode", "adxNode", "stochasticNode"]:

@@ -1,5 +1,6 @@
 // Node Type Imports
 import PriceNode from '../../../components/nodes/data/PriceNode.jsx';
+import ConstantNode from '../../../components/nodes/data/ConstantNode.jsx';
 import TimeNode from '../../../components/nodes/data/TimeNode.jsx';
 import SpreadNode from '../../../components/nodes/data/SpreadNode.jsx';
 import SMANode from '../../../components/nodes/indicators/SMANode.jsx';
@@ -31,6 +32,7 @@ import LabelNode from '../../../components/nodes/other/LabelNode.jsx';
 
 export const nodeTypes = {
   priceNode: PriceNode,
+  constantNode: ConstantNode,
   timeNode: TimeNode,
   spreadNode: SpreadNode,
   smaNode: SMANode,

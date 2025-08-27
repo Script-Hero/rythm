@@ -7,6 +7,11 @@ export const nodeTemplates = [
     category: 'data',
   },
   {
+    type: 'constantNode',
+    label: 'Constant',
+    category: 'data',
+  },
+  {
     type: 'timeNode',
     label: 'Time Filter',
     category: 'data',
