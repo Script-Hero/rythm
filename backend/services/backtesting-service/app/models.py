@@ -20,7 +20,9 @@ class BacktestStatus(str, Enum):
 
 class BacktestRequest(BaseModel):
     """Backtest request model."""
-    strategy_id: UUID = Field(..., description="ID of the strategy to backtest")
+    strategy_id: Optional[UUID] = Field(default=None, description="ID of the strategy to backtest")
+    # Optional: allow passing a raw json_tree for template-based or ad-hoc strategies
+    json_tree: Optional[Dict[str, Any]] = Field(default=None, description="Strategy graph (nodes, edges)")
     symbol: str = Field(..., description="Trading symbol (e.g., BTC/USD)")
     start_date: datetime = Field(..., description="Backtest start date")
     end_date: datetime = Field(..., description="Backtest end date")

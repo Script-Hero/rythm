@@ -13,6 +13,7 @@ from uuid import UUID
 import structlog
 import uvicorn
 from fastapi import FastAPI, HTTPException, status, Depends, BackgroundTasks, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -26,15 +27,21 @@ from .services import (
     BacktestEngine, AnalyticsEngine, JobQueue
 )
 from .auth import get_current_user, User
+import sys, os
+sys.path.append(os.path.join(os.path.dirname(__file__), '../../..'))
+from shared.strategy_engine.compiler import StrategyCompiler
 
 # Configure logging
+# Map LOG_LEVEL env/config to structlog numeric level
+_LEVELS = {"DEBUG": 10, "INFO": 20, "WARNING": 30, "ERROR": 40}
+_level = _LEVELS.get(getattr(settings, "LOG_LEVEL", "INFO").upper(), 20)
 structlog.configure(
     processors=[
         structlog.processors.TimeStamper(fmt="iso"),
         structlog.processors.add_log_level,
         structlog.processors.JSONRenderer()
     ],
-    wrapper_class=structlog.make_filtering_bound_logger(40),
+    wrapper_class=structlog.make_filtering_bound_logger(_level),
     logger_factory=structlog.PrintLoggerFactory(),
     cache_logger_on_first_use=True,
 )
@@ -87,6 +94,27 @@ app = FastAPI(
     lifespan=lifespan
 )
 
+# Log request validation errors (e.g., bad UUIDs in strategy_id)
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    try:
+        body = await request.json()
+    except Exception:
+        body = None
+    logger.error("🧪 Request validation error",
+                 path=str(request.url),
+                 errors=[e['msg'] for e in exc.errors()],
+                 error_locations=[e['loc'] for e in exc.errors()],
+                 body_keys=list(body.keys()) if isinstance(body, dict) else None)
+    return JSONResponse(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        content={
+            "success": False,
+            "detail": "Invalid request payload",
+            "errors": exc.errors()
+        }
+    )
+
 # CORS middleware
 app.add_middleware(
     CORSMiddleware,
@@ -119,6 +147,7 @@ async def run_backtest(
                    user_id=current_user.id,
                    symbol=request.symbol,
                    strategy_id=request.strategy_id,
+                   has_json_tree=bool(request.json_tree),
                    has_auth_header=bool(auth_header),
                    token_length=len(user_token) if user_token else 0)
         
@@ -138,12 +167,49 @@ async def run_backtest(
                 detail=f"Validation error: {str(e)}"
             )
         
-        # Get strategy from Strategy Service with user authentication
-        strategy = await strategy_service.get_compiled_strategy(request.strategy_id, user_token)
-        if not strategy:
+        # Resolve strategy: by ID (saved) or compile from provided json_tree (template/ad-hoc)
+        if request.strategy_id:
+            logger.info("🧭 Resolving strategy by ID", strategy_id=str(request.strategy_id))
+            strategy = await strategy_service.get_compiled_strategy(request.strategy_id, user_token)
+            if not strategy:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Strategy not found or not compiled"
+                )
+            logger.info("✅ Strategy metadata retrieved",
+                        strategy_id=str(request.strategy_id),
+                        has_json_tree=isinstance(strategy, dict) and 'json_tree' in strategy,
+                        has_compilation_report=isinstance(strategy, dict) and 'compilation_report' in strategy,
+                        json_tree_nodes=len((strategy.get('json_tree') or {}).get('nodes', [])) if isinstance(strategy, dict) else 0,
+                        json_tree_edges=len((strategy.get('json_tree') or {}).get('edges', [])) if isinstance(strategy, dict) else 0)
+        elif request.json_tree:
+            # Compile locally to avoid DB persistence for templates
+            logger.info("🔧 Compiling strategy from provided json_tree (template/ad-hoc)")
+            compiler = StrategyCompiler()
+            result = compiler.compile_strategy(request.json_tree)  # type: ignore[arg-type]
+            if not result.success or not result.strategy_instance:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail={
+                        "message": "Strategy compilation failed",
+                        "errors": result.errors or []
+                    }
+                )
+            # Pack minimal structure expected by engine consumers
+            strategy = {
+                "json_tree": request.json_tree,
+                "compilation_report": {
+                    "success": True,
+                    "execution_order": result.execution_order or []
+                }
+            }
+            logger.info("✅ Template/ad-hoc strategy compiled", execution_order_len=len(result.execution_order or []))
+        else:
+            logger.error("❌ No strategy_id or json_tree provided",
+                         body_present=True)
             raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Strategy not found or not compiled"
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Either strategy_id or json_tree must be provided"
             )
         
         # Create backtest job

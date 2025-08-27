@@ -785,7 +785,7 @@ class BacktestEngine:
             strategy_executor = None
         
         # Execute strategy on each data point
-        logger.warning("🚀 STARTING BACKTEST EXECUTION", 
+        logger.info("🚀 STARTING BACKTEST EXECUTION", 
                       total_bars=len(data),
                       strategy_executor_available=bool(strategy_executor),
                       first_bar_sample=data[0] if data else None)
@@ -795,10 +795,10 @@ class BacktestEngine:
             timestamp = bar.get("timestamp", datetime.utcnow())
             
             if i < 3 or i == len(data) - 1:  # Log first 3 and last bar
-                logger.warning(f"🔍 BAR {i}", 
-                              bar=bar,
-                              current_price=current_price,
-                              timestamp=timestamp)
+                logger.debug(f"🔍 BAR {i}", 
+                             bar=bar,
+                             current_price=current_price,
+                             timestamp=timestamp)
             
             # Convert timestamp if needed
             if isinstance(timestamp, str):
@@ -838,20 +838,20 @@ class BacktestEngine:
             if strategy_executor:
                 try:
                     if i < 15 or signals:  # Debug first 15 bars (enough for SMA buildup) + any with signals
-                        logger.warning("🎯 EXECUTING STRATEGY", 
-                                      bar_index=i,
-                                      market_data=market_data,
-                                      strategy_nodes=len(strategy_executor.nodes),
-                                      execution_order=strategy_executor.execution_order)
+                        logger.debug("🎯 EXECUTING STRATEGY", 
+                                     bar_index=i,
+                                     market_data=market_data,
+                                     strategy_nodes=len(strategy_executor.nodes),
+                                     execution_order=strategy_executor.execution_order)
                     
                     signals = strategy_executor.execute(market_data)
                     
                     if signals or i < 15 or i == len(data) - 1:  # Always log signals, plus first 15 bars
-                        logger.warning("🎯 STRATEGY EXECUTION RESULT", 
-                                      bar_index=i,
-                                      signals_generated=len(signals) if signals else 0,
-                                      signals=signals,
-                                      current_price=current_price)
+                        logger.debug("🎯 STRATEGY EXECUTION RESULT", 
+                                     bar_index=i,
+                                     signals_generated=len(signals) if signals else 0,
+                                     signals=signals,
+                                     current_price=current_price)
                                
                 except Exception as e:
                     logger.error("Strategy execution error", error=str(e), bar_index=i)

@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import { useSearchParams } from "react-router-dom";
-import { getBasicTemplateList } from "../../build_algorithm/basic-templates";
-import { getTemplateList } from "../../build_algorithm/complex-templates";
+import { getBasicTemplateList, getBasicTemplate } from "../../build_algorithm/basic-templates";
+import { getTemplateList, getTemplate } from "../../build_algorithm/complex-templates";
 import { useBacktestValidation } from "../hooks/useBacktestValidation";
 import { apiService } from '@/services/api';
 
@@ -119,9 +119,31 @@ export const BacktestProvider = ({ children }) => {
       // Use override strategy if provided, otherwise use selectedStrategy
       const strategyToUse = overrideStrategy || selectedStrategy;
       
+      // Determine if we have a saved strategy (UUID) or a template key
+      const uuidV4Regex = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+      const isUUID = uuidV4Regex.test(String(strategyToUse));
+
+      // If template, resolve its nodes/edges
+      let jsonTree = null;
+      if (!isUUID) {
+        let template = getBasicTemplate(strategyToUse);
+        if (!template) {
+          template = getTemplate(strategyToUse);
+        }
+        if (template) {
+          jsonTree = {
+            nodes: template.initialNodes || [],
+            edges: template.initialEdges || []
+          };
+        } else {
+          console.warn('⚠️ Backtest: Unknown template key; proceeding without json_tree', { strategy_key: strategyToUse });
+        }
+      }
+
       // Build new job-based backtest request
       const backtestRequestBody = {
-        strategy_id: strategyToUse, // Assumes UUID format for now
+        strategy_id: isUUID ? strategyToUse : undefined,
+        json_tree: jsonTree || undefined,
         symbol: ticker,
         start_date: new Date(fromDate + "T00:00:00.000Z").toISOString(),
         end_date: new Date(toDate + "T23:59:59.999Z").toISOString(),
@@ -131,11 +153,18 @@ export const BacktestProvider = ({ children }) => {
         slippage_rate: "0.0005"
       };
 
-      console.log('Submitting backtest job:', backtestRequestBody);
+      console.log('Submitting backtest job:', {
+        ...backtestRequestBody,
+        has_json_tree: !!backtestRequestBody.json_tree,
+        node_count: backtestRequestBody.json_tree?.nodes?.length || 0,
+        edge_count: backtestRequestBody.json_tree?.edges?.length || 0
+      });
 
       // Submit backtest job using ApiService with authentication
       const jobResponse = await apiService.runBacktest({
         strategy_id: backtestRequestBody.strategy_id,
+        // Pass json_tree through to backend when present
+        ...(backtestRequestBody.json_tree ? { json_tree: backtestRequestBody.json_tree } : {}),
         ticker: backtestRequestBody.symbol,
         fromDate: backtestRequestBody.start_date,
         toDate: backtestRequestBody.end_date,

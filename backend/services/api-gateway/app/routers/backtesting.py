@@ -37,6 +37,12 @@ async def run_backtest(
         
         # Add user context (convert UUID to string for JSON serialization)
         body["user_id"] = str(current_user.id)
+        logger.info("🌉 API GW: Backtest proxy received",
+                    user_id=str(current_user.id),
+                    has_strategy_id='strategy_id' in body,
+                    has_json_tree='json_tree' in body,
+                    symbol=body.get('symbol'),
+                    interval=body.get('interval'))
         
         # Proxy to backtesting service with authorization header
         auth_header = request.headers.get("authorization")
@@ -53,6 +59,9 @@ async def run_backtest(
                 json=body,
                 headers=headers
             )
+            logger.info("🌉 API GW: Forwarded to backtesting-service",
+                        status_code=response.status_code,
+                        ok=(200 <= response.status_code < 300))
             
             if response.status_code == 200:
                 return response.json()

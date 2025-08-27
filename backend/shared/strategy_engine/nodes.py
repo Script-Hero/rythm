@@ -97,7 +97,7 @@ class PriceNode(Node):
     outputs = ("price-out",)
     
     def compute(self, **inputs) -> Dict[str, Any]:
-        logger.info("💰 PriceNode computing", 
+        logger.debug("💰 PriceNode computing", 
                    node_id=self.id,
                    inputs_received=list(inputs.keys()),
                    inputs_content={k: str(v) for k, v in inputs.items()})
@@ -121,7 +121,7 @@ class PriceNode(Node):
                 price_value = market_data.get("price", market_data.get("close", 0))
             
             result = {"price-out": Decimal(str(price_value))}
-            logger.info("💰 PriceNode using market data", 
+            logger.debug("💰 PriceNode using market data", 
                        price_type=price_type,
                        price_value=price_value,
                        result=result)
@@ -130,12 +130,12 @@ class PriceNode(Node):
         # Fallback for compilation testing - use mock data
         price_type = self.data.get("priceType", "close")
         
-        logger.info("💰 PriceNode using fallback for compilation test", 
+        logger.debug("💰 PriceNode using fallback for compilation test", 
                    price_type=price_type,
                    node_data=self.data)
         
         result = {"price-out": Decimal('100.0')}
-        logger.info("💰 PriceNode returning mock data for compilation", result=result)
+        logger.debug("💰 PriceNode returning mock data for compilation", result=result)
         return result
 
 
@@ -145,7 +145,7 @@ class VolumeNode(Node):
     outputs = ("volume-out",)
     
     def compute(self, **inputs) -> Dict[str, Any]:
-        logger.info("📊 VolumeNode computing", 
+        logger.debug("📊 VolumeNode computing", 
                    node_id=self.id,
                    inputs_received=list(inputs.keys()),
                    inputs_content={k: str(v) for k, v in inputs.items()})
@@ -155,17 +155,17 @@ class VolumeNode(Node):
         if market_data:
             volume_value = market_data.get("volume", 0)
             result = {"volume-out": Decimal(str(volume_value))}
-            logger.info("📊 VolumeNode using market data", 
+            logger.debug("📊 VolumeNode using market data", 
                        volume_value=volume_value,
                        result=result)
             return result
         
         # Fallback for compilation testing - use mock data
-        logger.info("📊 VolumeNode using fallback for compilation test", 
+        logger.debug("📊 VolumeNode using fallback for compilation test", 
                    node_data=self.data)
         
         result = {"volume-out": Decimal('1000.0')}
-        logger.info("📊 VolumeNode returning mock data for compilation", result=result)
+        logger.debug("📊 VolumeNode returning mock data for compilation", result=result)
         return result
 
 
@@ -176,7 +176,7 @@ class SMANode(Node):
     outputs = ("sma-out",)
     
     def compute(self, price_in=None, **inputs) -> Dict[str, Any]:
-        logger.info("📈 SMANode computing", 
+        logger.debug("📈 SMANode computing", 
                    node_id=self.id,
                    price_in=str(price_in),
                    inputs_received=list(inputs.keys()),
@@ -187,7 +187,7 @@ class SMANode(Node):
             return {"sma-out": None}
         
         period = int(self.data.get("period", 20))
-        logger.info("📈 SMANode configuration", 
+        logger.debug("📈 SMANode configuration", 
                    node_id=self.id,
                    period=period,
                    node_data=self.data)
@@ -196,7 +196,7 @@ class SMANode(Node):
         old_len = len(prices)
         
         prices.append(float(price_in))
-        logger.info("📈 SMANode price added", 
+        logger.debug("📈 SMANode price added", 
                    node_id=self.id,
                    new_price=float(price_in),
                    prices_count_before=old_len,
@@ -206,14 +206,14 @@ class SMANode(Node):
         if len(prices) >= period:
             sma = sum(prices) / len(prices)
             result = {"sma-out": Decimal(str(sma))}
-            logger.info("✅ SMANode calculated SMA", 
+            logger.debug("✅ SMANode calculated SMA", 
                        node_id=self.id,
                        sma_value=sma,
                        prices_used=len(prices),
                        result=result)
             return result
         
-        logger.info("⏳ SMANode waiting for more prices", 
+        logger.debug("⏳ SMANode waiting for more prices", 
                    node_id=self.id,
                    current_count=len(prices),
                    needed_count=period)
@@ -474,7 +474,7 @@ class CompareNode(Node):
     outputs = ("result-out",)
     
     def compute(self, value1_in=None, value2_in=None, **inputs) -> Dict[str, Any]:
-        logger.info("⚖️ CompareNode computing", 
+        logger.debug("⚖️ CompareNode computing", 
                    node_id=self.id,
                    value1_in=str(value1_in),
                    value2_in=str(value2_in),
@@ -488,7 +488,7 @@ class CompareNode(Node):
             return {"result-out": False}
         
         operator = self.data.get("operator", "greater_than")
-        logger.info("⚖️ CompareNode configuration", 
+        logger.debug("⚖️ CompareNode configuration", 
                    node_id=self.id,
                    operator=operator,
                    node_data=self.data)
@@ -497,7 +497,7 @@ class CompareNode(Node):
             val1 = float(value1_in)
             val2 = float(value2_in)
             
-            logger.info("⚖️ CompareNode values converted", 
+            logger.debug("⚖️ CompareNode values converted", 
                        node_id=self.id,
                        val1=val1,
                        val2=val2,
@@ -519,7 +519,7 @@ class CompareNode(Node):
                              operator=operator)
                 result = False
             
-            logger.info("✅ CompareNode result", 
+            logger.debug("✅ CompareNode result", 
                        node_id=self.id,
                        val1=val1,
                        operator=operator,
@@ -708,7 +708,7 @@ class BuyNode(Node):
     outputs = ("signal-out",)
     
     def compute(self, trigger_in=None, **inputs) -> Dict[str, Any]:
-        logger.info("🟢 BuyNode computing", 
+        logger.debug("🟢 BuyNode computing", 
                    node_id=self.id,
                    trigger_in=trigger_in,
                    inputs_received=list(inputs.keys()),
@@ -724,14 +724,14 @@ class BuyNode(Node):
                 "order_type": order_type
             }
             
-            logger.info("🎯 BuyNode generating BUY signal", 
+            logger.debug("🎯 BuyNode generating BUY signal", 
                        node_id=self.id,
                        signal=signal,
                        trigger_value=trigger_in)
             
             return {"signal-out": signal}
         
-        logger.info("⏸️ BuyNode not triggered", 
+        logger.debug("⏸️ BuyNode not triggered", 
                    node_id=self.id,
                    trigger_in=trigger_in)
         return {"signal-out": None}
@@ -743,7 +743,7 @@ class SellNode(Node):
     outputs = ("signal-out",)
     
     def compute(self, trigger_in=None, **inputs) -> Dict[str, Any]:
-        logger.info("🔴 SellNode computing", 
+        logger.debug("🔴 SellNode computing", 
                    node_id=self.id,
                    trigger_in=trigger_in,
                    inputs_received=list(inputs.keys()),
@@ -759,14 +759,14 @@ class SellNode(Node):
                 "order_type": order_type
             }
             
-            logger.info("🎯 SellNode generating SELL signal", 
+            logger.debug("🎯 SellNode generating SELL signal", 
                        node_id=self.id,
                        signal=signal,
                        trigger_value=trigger_in)
             
             return {"signal-out": signal}
         
-        logger.info("⏸️ SellNode not triggered", 
+        logger.debug("⏸️ SellNode not triggered", 
                    node_id=self.id,
                    trigger_in=trigger_in)
         return {"signal-out": None}
