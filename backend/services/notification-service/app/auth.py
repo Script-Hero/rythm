@@ -32,8 +32,8 @@ async def get_current_user_from_websocket(token: Optional[str]) -> Optional[User
     try:
         # Decode JWT token
         payload = jwt.decode(
-            token, 
-            settings.JWT_SECRET, 
+            token,
+            settings.JWT_SECRET,
             algorithms=[settings.JWT_ALGORITHM]
         )
         

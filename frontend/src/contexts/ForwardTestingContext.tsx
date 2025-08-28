@@ -1,6 +1,8 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { io, Socket } from 'socket.io-client';
 import { apiService } from '@/services/api';
+import { useWebSocket } from '@/hooks/useWebSocket';
+import { MESSAGE_TYPES } from '@/services/websocket';
 import { toast } from 'sonner';
 import type {
   ForwardTestSession,
@@ -99,7 +101,15 @@ export const ForwardTestingProvider: React.FC<ForwardTestingProviderProps> = ({ 
   // Connection state
   const [socket, setSocket] = useState<Socket | null>(null);
   const [isConnected, setIsConnected] = useState(false);
+  const webSocket = useWebSocket({
+    autoConnect: true,
+    onConnect: () => setIsConnected(true),
+    onDisconnect: () => setIsConnected(false),
+    onError: () => setIsConnected(false)
+  });
   const [hasLocalSessions, setHasLocalSessions] = useState(false);
+  // Guard to avoid repeated initial fetches
+  const didInitialFetchRef = useRef(false);
   
   // Ref to store restoreSession function for WebSocket handler access
   const restoreSessionRef = useRef<((sessionData: any) => void) | null>(null);
@@ -162,23 +172,27 @@ export const ForwardTestingProvider: React.FC<ForwardTestingProviderProps> = ({ 
       
       // Process all sessions
       if (response.success && response.message.sessions && response.message.count > 0) {
+        const toNum = (v: any, d: number = 0) => {
+          const n = Number(v);
+          return Number.isFinite(n) ? n : d;
+        };
         const sessions = response.message.sessions.map((test: any) => ({
           testId: test.session_id || test.id,
           name: test.name || `${test.strategyName} Test`,
           strategyName: test.strategyName,
           status: test.status,
-          startTime: new Date(test.startTime || test.start_time),
+          startTime: new Date(test.startTime || test.start_time || Date.now()),
           isActive: test.status === 'RUNNING' || test.status === 'PAUSED',
           settings: test.settings || {},
           symbol: test.symbol || 'BTC/USD',
           timeframe: test.timeframe || '1m',
-          portfolioValue: test.portfolioValue || test.current_portfolio_value || test.initial_balance || 10000,
-          totalTrades: test.totalTrades || test.total_trades || 0,
-          pnlPercent: test.pnlPercent || test.total_return || 0,
-          pnlDollar: test.pnlDollar || test.realized_pnl || 0,
-          maxDrawdown: test.maxDrawdown || test.max_drawdown || 0,
-          winRate: test.winRate || test.win_rate || 0,
-          initialBalance : test.initialBalance || -1
+          portfolioValue: toNum(test.portfolioValue ?? test.current_portfolio_value ?? test.initial_balance, 10000),
+          totalTrades: toNum(test.totalTrades ?? test.total_trades, 0),
+          pnlPercent: toNum(test.pnlPercent ?? test.total_return, 0),
+          pnlDollar: toNum(test.pnlDollar ?? test.realized_pnl, 0),
+          maxDrawdown: toNum(test.maxDrawdown ?? test.max_drawdown, 0),
+          winRate: toNum(test.winRate ?? test.win_rate, 0),
+          initialBalance: toNum(test.initialBalance ?? test.initial_balance, -1)
         }));
         console.log('🔄 [ForwardTestingContext] Parsed sessions from server:', sessions);
         
@@ -198,82 +212,7 @@ export const ForwardTestingProvider: React.FC<ForwardTestingProviderProps> = ({ 
 
 
 
-  // Initialize socket connection when app starts
-  useEffect(() => {
-    // TODO: Enable Socket.IO connection when notification service is ready
-    console.log('🔧 [ForwardTestingContext] Socket.IO disabled - notification service not yet implemented');
-    return; // Disable Socket.IO for now
-    
-    const newSocket = io('http://localhost:8000', {
-      transports: ['polling', 'websocket'],
-      upgrade: true,
-      rememberUpgrade: false,
-      timeout: 20000,
-      forceNew: true
-    });
-    
-    newSocket.on('connect', () => {
-      console.log('Global forward testing socket connected');
-      setIsConnected(true);
-    });
-
-    newSocket.on('disconnect', () => {
-      console.log('Global forward testing socket disconnected');
-      setIsConnected(false);
-    });
-
-    newSocket.on('forward_test_error', (data) => {
-      console.error('Forward test error:', data);
-      toast.error(data.error || 'Forward test error');
-    });
-
-    // Handle automatic chart data restoration from backend
-    newSocket.on('chart_data_restored', (data) => {
-      console.log('📊 [ForwardTestingContext] chart_data_restored event received:', data);
-      
-      if (data.session_id && data.chart_data) {
-        // Use the existing restoreSession function to process the data
-        const sessionData = {
-          session: { session_id: data.session_id },
-          chart_data: data.chart_data,
-          trades: data.trades || []
-        };
-        
-        console.log('📊 [ForwardTestingContext] Automatically restoring chart data for session:', data.session_id);
-        // Call restoreSession (defined below) to handle the data
-        // This will be available due to closure when restoreSession is defined
-        setTimeout(() => {
-          // Use setTimeout to ensure restoreSession is available
-          restoreSessionRef.current?.(sessionData);
-        }, 0);
-        
-        toast.success(`Chart data automatically restored for session ${data.session_id}`);
-      }
-    });
-
-    // Centralized multi-session WebSocket event handling
-    newSocket.on('forward_test_update', handleWebSocketEvent);
-    newSocket.on('price_update', handleWebSocketEvent);
-    newSocket.on('portfolio_update', handleWebSocketEvent);
-    newSocket.on('trade_executed', handleWebSocketEvent);
-    newSocket.on('metrics_update', handleWebSocketEvent);
-    newSocket.on('portfolio_data', handleWebSocketEvent);
-    newSocket.on('drawdown_data', handleWebSocketEvent);
-
-    // Add debugging for all WebSocket events
-    newSocket.onAny((eventName, ...args) => {
-      console.log('🔗 [ForwardTestingContext] WebSocket event received:', eventName, args);
-    });
-
-    setSocket(newSocket);
-
-    // Check for active sessions on startup
-    checkActiveTests();
-
-    return () => {
-      newSocket.disconnect();
-    };
-  }, [handleWebSocketEvent, checkActiveTests]);
+  // (moved) WebSocket bridging effect is declared after handler definitions to avoid TDZ
 
   
   // Individual event handlers for multi-session support
@@ -418,6 +357,105 @@ export const ForwardTestingProvider: React.FC<ForwardTestingProviderProps> = ({ 
     addSessionAlert(sessionId, 'ERROR', event.message || 'Unknown error occurred');
     toast.error(event.message || 'Forward test error');
   }, []);
+
+  // Subscribe to active sessions only when connection establishes
+  useEffect(() => {
+    if (!isConnected) return;
+    const subscribeActive = async () => {
+      await Promise.all((sessions || [])
+        .filter(s => s.isActive)
+        .map(s => webSocket.subscribeToSession(s.testId))
+      );
+    };
+    subscribeActive().catch(() => {});
+    // do not depend on sessions to avoid repeated subscriptions
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isConnected, webSocket]);
+
+  // Bridge Notification Service messages into existing handlers (register once)
+  useEffect(() => {
+    const onPortfolioUpdate = (msg: any) => {
+      const sessionId = (msg && (msg.session_id || msg.data?.session_id)) as string;
+      if (!sessionId) return;
+      const portfolio = msg.portfolio || msg.data?.portfolio || {};
+      const metrics = msg.metrics || msg.data?.metrics || {};
+      handlePortfolioUpdate({
+        type: 'PORTFOLIO_UPDATE',
+        portfolio: {
+          total_value: portfolio.total_value ?? portfolio.totalValue ?? 0,
+          cash: portfolio.cash_balance ?? portfolio.cash ?? 0,
+          positions: portfolio.positions ?? {}
+        },
+        metrics: {
+          total_trades: metrics.total_trades ?? 0,
+          return_percentage: metrics.total_pnl_percent ?? portfolio.total_pnl_percent ?? 0,
+          max_drawdown: metrics.max_drawdown ?? 0,
+          win_rate: metrics.win_rate ?? 0,
+          current_drawdown: metrics.current_drawdown ?? 0
+        }
+      } as any, sessionId);
+    };
+
+    const onTradeExecution = (msg: any) => {
+      const sessionId = (msg && (msg.session_id || msg.data?.session_id)) as string;
+      if (!sessionId) return;
+      const t = msg.trade || msg.data?.trade || {};
+      handleTradeExecuted({
+        type: 'TRADE_EXECUTED',
+        tradeId: t.trade_id || t.id,
+        id: t.trade_id || t.id,
+        symbol: t.symbol,
+        side: (t.side || t.action || 'BUY') as any,
+        quantity: Number(t.quantity || 0),
+        price: Number(t.price || 0),
+        timestamp: t.timestamp || Date.now(),
+        status: (t.status || 'FILLED') as any,
+        pnl: Number(t.pnl || 0)
+      } as any, sessionId);
+    };
+
+    const onForwardTestEvent = (msg: any) => {
+      const sessionId = (msg && (msg.session_id || msg.data?.session_id)) as string;
+      const eventType = msg.event_type || msg.data?.event_type;
+      if (!sessionId || !eventType) return;
+      setSessions(prev => prev.map(s => {
+        if (s.testId !== sessionId) return s;
+        switch (eventType) {
+          case 'SESSION_STARTED':
+            return { ...s, status: 'RUNNING' as any, isActive: true };
+          case 'SESSION_PAUSED':
+            return { ...s, status: 'PAUSED' as any, isActive: true };
+          case 'SESSION_RESUMED':
+            return { ...s, status: 'RUNNING' as any, isActive: true };
+          case 'SESSION_STOPPED':
+            return { ...s, status: 'STOPPED' as any, isActive: false };
+          case 'SESSION_ERROR':
+            return { ...s, status: 'ERROR' as any, isActive: false };
+          default:
+            return s;
+        }
+      }));
+    };
+
+    webSocket.addMessageHandler(MESSAGE_TYPES.PORTFOLIO_UPDATE, onPortfolioUpdate as any);
+    webSocket.addMessageHandler(MESSAGE_TYPES.TRADE_EXECUTION, onTradeExecution as any);
+    webSocket.addMessageHandler(MESSAGE_TYPES.FORWARD_TEST_EVENT, onForwardTestEvent as any);
+
+    return () => {
+      webSocket.removeMessageHandler(MESSAGE_TYPES.PORTFOLIO_UPDATE, onPortfolioUpdate as any);
+      webSocket.removeMessageHandler(MESSAGE_TYPES.TRADE_EXECUTION, onTradeExecution as any);
+      webSocket.removeMessageHandler(MESSAGE_TYPES.FORWARD_TEST_EVENT, onForwardTestEvent as any);
+    };
+  }, [webSocket, handlePortfolioUpdate, handleTradeExecuted]);
+
+  // Initial sessions load (once) or on first connect
+  useEffect(() => {
+    if (didInitialFetchRef.current) return;
+    // Optionally wait for socket connection to reduce duplicate work
+    if (!isConnected) return;
+    didInitialFetchRef.current = true;
+    checkActiveTests();
+  }, [isConnected, checkActiveTests]);
   
   // Chart data management functions - memoized to prevent infinite re-renders
   const updateChartData = useCallback((sessionId: SessionIdentifier, type: 'price' | 'portfolio' | 'drawdown', data: any) => {
@@ -641,6 +679,9 @@ export const ForwardTestingProvider: React.FC<ForwardTestingProviderProps> = ({ 
       // Delete from backend
       await apiService.deleteForwardTestSession(sessionId);
       
+      // Remove session from local state immediately for responsive UI
+      setSessions(prev => prev.filter(s => s.testId !== sessionId));
+      
       // Clear all session data
       setSessionChartData(prev => {
         const newData = { ...prev };
@@ -672,12 +713,15 @@ export const ForwardTestingProvider: React.FC<ForwardTestingProviderProps> = ({ 
         return newData;
       });
       
+      // Refresh session list from backend after successful delete
+      await checkActiveTests();
+      
       toast.success('Session deleted');
     } catch (error) {
       console.error('Error deleting session:', error);
       toast.error('Failed to delete session');
     }
-  }, [getSession]);
+  }, [getSession, checkActiveTests]);
 
   const startTest = useCallback(async (sessionId: string): Promise<boolean> => {
     try {
@@ -708,6 +752,7 @@ export const ForwardTestingProvider: React.FC<ForwardTestingProviderProps> = ({ 
         s.testId === sessionId ? { ...s, status: 'RUNNING' as any, isActive: true } : s
       ));
       
+      try { await webSocket.subscribeToSession(sessionId); } catch {}
       toast.success(`Started session: ${session.name}`);
       return true;
     } catch (error) {
@@ -715,7 +760,7 @@ export const ForwardTestingProvider: React.FC<ForwardTestingProviderProps> = ({ 
       toast.error('Failed to start forward test');
       return false;
     }
-  }, [socket, getSession]);
+  }, [webSocket, getSession]);
 
   const pauseTest = useCallback(async (sessionId: string): Promise<void> => {
     try {
@@ -732,19 +777,14 @@ export const ForwardTestingProvider: React.FC<ForwardTestingProviderProps> = ({ 
         s.testId === sessionId ? { ...s, status: 'PAUSED' as any, isActive: true } : s
       ));
       
-      if (socket) {
-        socket.emit('forward_test_event', {
-          type: 'PAUSE_FORWARD_TEST',
-          test_id: sessionId,
-        });
-      }
+      // keep subscription during pause
       
       toast.success(`Paused session: ${session.name}`);
     } catch (error) {
       console.error('Error pausing forward test:', error);
       toast.error('Failed to pause forward test');
     }
-  }, [socket, getSession]);
+  }, [getSession]);
 
   const resumeTest = useCallback(async (sessionId: string): Promise<boolean> => {    
     try {
@@ -792,19 +832,14 @@ export const ForwardTestingProvider: React.FC<ForwardTestingProviderProps> = ({ 
         s.testId === sessionId ? { ...s, status: 'STOPPED' as any, isActive: false } : s
       ));
       
-      if (socket) {
-        socket.emit('forward_test_event', {
-          type: 'STOP_FORWARD_TEST',
-          test_id: sessionId,
-        });
-      }
+      try { await webSocket.unsubscribeFromSession(sessionId); } catch {}
       
       toast.success(`Stopped session: ${session.name}`);
     } catch (error) {
       console.error('Error stopping forward test:', error);
       toast.error('Failed to stop forward test');
     }
-  }, [socket, getSession]);
+  }, [webSocket, getSession]);
 
   const updateSessionStatus = useCallback(async (sessionId: string, status: string, portfolio?: any, metrics?: any) => {
     try {

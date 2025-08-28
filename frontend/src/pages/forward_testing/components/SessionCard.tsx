@@ -149,7 +149,10 @@ export const SessionCard: React.FC<SessionCardProps> = ({
             <p className="text-muted-foreground">Portfolio</p>
             <p className="font-semibold">{formatCurrency(session.portfolioValue || session.initialBalance || 10000)}</p>
             <p className="text-xs text-muted-foreground">
-              Max DD: {session.maxDrawdown.toFixed(1)}%
+              {(() => {
+                const maxDD = Number.isFinite(Number(session.maxDrawdown)) ? Number(session.maxDrawdown) : 0;
+                return `Max DD: ${maxDD.toFixed(1)}%`;
+              })()}
             </p>
           </div>
         </div>

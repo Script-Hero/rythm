@@ -59,7 +59,7 @@ async def get_portfolio_data(session_id: UUID) -> dict:
     """Get portfolio data for session detail response."""
     try:
         portfolio = PortfolioSummary(
-            session_id=session_id,
+            session_id=session.id,
             cash_balance=100000,
             total_value=100000,
             total_pnl=0,
@@ -76,7 +76,10 @@ async def get_portfolio_data(session_id: UUID) -> dict:
 async def get_metrics_data(session_id: UUID) -> dict:
     """Get metrics data for session detail response."""
     try:
-        metrics = await session_manager.get_session_metrics(session_id)
+        session = await DatabaseService.get_session_by_session_id(session_id, UUID(current_user.id))
+        if not session:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+        metrics = await session_manager.get_session_metrics(session.id)
         return metrics or {}
     except Exception:
         return {}
@@ -142,8 +145,14 @@ async def create_session(
                 detail=f"Validation errors: {', '.join(validation_errors)}"
             )
         
-        # Get strategy from Strategy Service
-        strategy = await StrategyService.get_compiled_strategy(session_data.strategy_id)
+        # Extract JWT token from Authorization header
+        user_token = None
+        auth_header = request.headers.get("Authorization")
+        if auth_header and auth_header.startswith("Bearer "):
+            user_token = auth_header[7:]  # Remove "Bearer " prefix
+
+        # Get strategy from Strategy Service (requires auth)
+        strategy = await StrategyService.get_compiled_strategy(session_data.strategy_id, user_token)
         if not strategy:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -151,17 +160,11 @@ async def create_session(
             )
         
         # Create session in database
-        session = await DatabaseService.create_session(
+        session, ext_session_id = await DatabaseService.create_session(
             user_id=UUID(current_user.id),
             session_data=session_data,
             strategy_snapshot=strategy
         )
-        
-        # Extract JWT token from Authorization header
-        user_token = None
-        auth_header = request.headers.get("Authorization")
-        if auth_header and auth_header.startswith("Bearer "):
-            user_token = auth_header[7:]  # Remove "Bearer " prefix
         
         # Create session in session manager
         success, error_msg = await session_manager.create_session(session, strategy, user_token)
@@ -181,7 +184,7 @@ async def create_session(
         )
         
         return CreationResponse.session_created(
-            session_id=str(session.id),
+            session_id=str(ext_session_id),
             message="Forward test session created successfully"
         )
         
@@ -205,9 +208,14 @@ async def list_sessions(
 ):
     """List user's forward testing sessions."""
     try:
-        # TODO: Implement session listing with filters
-        sessions = []
-        return ListResponse.sessions_response(sessions, "Sessions retrieved successfully")
+        sessions = await DatabaseService.list_sessions(
+            user_id=UUID(current_user.id),
+            status_filter=status_filter,
+            symbol=symbol,
+            limit=limit,
+            offset=offset
+        )
+        return ListResponse.sessions_response([s.dict() for s in sessions], "Sessions retrieved successfully")
         
     except Exception as e:
         logger.error("Failed to list sessions", error=str(e))
@@ -219,7 +227,7 @@ async def list_sessions(
 
 @app.get("/{session_id}")
 async def get_session(
-    session_id: UUID,
+    session_id: str,
     current_user: User = Depends(get_current_user)
 ):
     """Get a specific forward testing session."""
@@ -272,7 +280,7 @@ async def update_session_status(
         
         # Update status if provided
         if session_update.status:
-            await DatabaseService.update_session_status(session_id, session_update.status)
+            await DatabaseService.update_session_status(session.id, session_update.status)
             session.status = session_update.status
             
             logger.info(
@@ -300,18 +308,18 @@ async def update_session_status(
 
 @app.post("/{session_id}/start")
 async def start_session(
-    session_id: UUID,
+    session_id: str,
     current_user: User = Depends(get_current_user)
 ) -> Dict[str, Any]:
     """Start a forward testing session with enhanced state management."""
     try:
-        session = await DatabaseService.get_session(session_id, UUID(current_user.id))
+        session = await DatabaseService.get_session_by_session_id(session_id, UUID(current_user.id))
         if not session:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Session not found"
             )
-        
+
         # Validate state transition
         valid_transition, error_msg = SessionValidator.validate_state_transition(
             session.status, SessionStatus.RUNNING
@@ -321,39 +329,46 @@ async def start_session(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=error_msg
             )
-        
+
         # Start session through session manager
-        success, error_msg = await session_manager.start_session(session_id)
+        success, error_msg = await session_manager.start_session(session.id)
         if not success:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail=f"Failed to start session: {error_msg}"
             )
-        
+
         # Start strategy execution
-        runtime_data = session_manager.active_sessions.get(session_id)
+        runtime_data = session_manager.active_sessions.get(session.id)
         if runtime_data and runtime_data.compiled_strategy:
             success, error_msg = await strategy_executor.start_strategy_execution(
-                session_id=session_id,
+                session_id=session.id,
                 user_id=UUID(current_user.id),
                 symbol=session.symbol,
                 compiled_strategy=runtime_data.compiled_strategy
             )
-            
+
             if not success:
                 # Rollback session start
-                await session_manager.stop_session(session_id, "Strategy execution failed")
+                await session_manager.stop_session(session.id, "Strategy execution failed")
                 raise HTTPException(
                     status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                     detail=f"Failed to start strategy execution: {error_msg}"
                 )
-        
-        logger.info("Session started with strategy execution", session_id=str(session_id))
-        
+
+        logger.info("Session started with strategy execution", session_id=str(session.id))
+        # Publish lifecycle event
+        await session_event_publisher.publish_session_status_change(
+            session_id=session.id,
+            user_id=UUID(current_user.id),
+            old_status=session.status,
+            new_status=SessionStatus.RUNNING
+        )
+
         return StandardResponse.success_response(
             message="Session started successfully"
         )
-        
+
     except HTTPException:
         raise
     except Exception as e:
@@ -366,7 +381,7 @@ async def start_session(
 
 @app.post("/{session_id}/stop")
 async def stop_session(
-    session_id: UUID,
+    session_id: str,
     current_user: User = Depends(get_current_user)
 ) -> Dict[str, Any]:
     """Stop a forward testing session."""
@@ -385,7 +400,16 @@ async def stop_session(
             )
         
         # Update session to stopped
-        await DatabaseService.update_session_status(session_id, SessionStatus.STOPPED)
+        await DatabaseService.update_session_status(session.id, SessionStatus.STOPPED)
+        await session_manager.stop_session(session.id, "User requested")
+        # Publish lifecycle event
+        await session_event_publisher.publish_session_status_change(
+            session_id=session.id,
+            user_id=UUID(current_user.id),
+            old_status=session.status,
+            new_status=SessionStatus.STOPPED,
+            reason="User requested"
+        )
         
         logger.info("Session stopped", session_id=str(session_id))
         
@@ -403,20 +427,118 @@ async def stop_session(
         )
 
 
-@app.delete("/{session_id}")
-async def delete_session(
-    session_id: UUID,
+@app.post("/{session_id}/pause")
+async def pause_session(
+    session_id: str,
     current_user: User = Depends(get_current_user)
 ) -> Dict[str, Any]:
-    """Delete a forward testing session (PLACEHOLDER)."""
+    """Pause a forward testing session."""
     try:
-        # TODO: Implement session deletion
-        logger.info("Session deletion requested (PLACEHOLDER)", session_id=str(session_id))
-        
-        return StandardResponse.success_response(
-            message="Session deletion not yet implemented - PLACEHOLDER response"
+        session = await DatabaseService.get_session_by_session_id(session_id, UUID(current_user.id))
+        if not session:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+
+        # Validate transition
+        valid, error_msg = SessionValidator.validate_state_transition(session.status, SessionStatus.PAUSED)
+        if not valid:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=error_msg)
+
+        success, err = await session_manager.pause_session(session.id)
+        if not success:
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=err or "Failed to pause session")
+
+        await DatabaseService.update_session_status(session.id, SessionStatus.PAUSED)
+
+        await session_event_publisher.publish_session_status_change(
+            session_id=session.id,
+            user_id=UUID(current_user.id),
+            old_status=session.status,
+            new_status=SessionStatus.PAUSED,
+            reason="User requested"
         )
-        
+
+        return StandardResponse.success_response(message="Session paused successfully")
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Failed to pause session", session_id=str(session_id), error=str(e))
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to pause session")
+
+
+@app.post("/{session_id}/resume")
+async def resume_session(
+    session_id: str,
+    current_user: User = Depends(get_current_user)
+) -> Dict[str, Any]:
+    """Resume a paused forward testing session."""
+    try:
+        session = await DatabaseService.get_session_by_session_id(session_id, UUID(current_user.id))
+        if not session:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+
+        # Validate transition
+        valid, error_msg = SessionValidator.validate_state_transition(session.status, SessionStatus.RUNNING)
+        if not valid:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=error_msg)
+
+        success, err = await session_manager.resume_session(session.id)
+        if not success:
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=err or "Failed to resume session")
+
+        await DatabaseService.update_session_status(session.id, SessionStatus.RUNNING)
+
+        await session_event_publisher.publish_session_status_change(
+            session_id=session.id,
+            user_id=UUID(current_user.id),
+            old_status=session.status,
+            new_status=SessionStatus.RUNNING,
+            reason="User requested"
+        )
+
+        return StandardResponse.success_response(message="Session resumed successfully")
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Failed to resume session", session_id=str(session_id), error=str(e))
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to resume session")
+
+
+@app.delete("/{session_id}")
+async def delete_session(
+    session_id: str,
+    current_user: User = Depends(get_current_user)
+) -> Dict[str, Any]:
+    """Delete a forward testing session and related data."""
+    try:
+        # Resolve session by external string first, then try internal UUID
+        session = await DatabaseService.get_session_by_session_id(session_id, UUID(current_user.id))
+        if not session:
+            try:
+                session = await DatabaseService.get_session(UUID(session_id), UUID(current_user.id))
+            except Exception:
+                session = None
+
+        if not session:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+
+        # Stop runtime if active
+        try:
+            await session_manager.stop_session(session.id, "Deleted by user")
+        except Exception:
+            pass
+
+        # Delete from database (cascades remove child rows)
+        deleted = await DatabaseService.delete_session(session.id, UUID(current_user.id))
+        if not deleted:
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to delete session")
+
+        logger.info("Session deleted", session_id=str(session.id))
+        return StandardResponse.success_response(message="Session deleted successfully").dict()
+
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error("Failed to delete session", session_id=str(session_id), error=str(e))
         raise HTTPException(
@@ -439,7 +561,11 @@ async def restore_session_data(
                 detail="session_id required"
             )
         
-        session_uuid = UUID(session_id)
+        # Resolve external string session_id to internal UUID
+        session_obj = await DatabaseService.get_session_by_session_id(session_id, UUID(current_user.id))
+        if not session_obj:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+        session_uuid = session_obj.id
         
         # Restore chart data
         success, chart_data = await session_event_publisher.restore_session_chart_data(
@@ -480,12 +606,15 @@ async def restore_session_data(
 # Portfolio and Performance Endpoints
 @app.get("/{session_id}/portfolio")
 async def get_portfolio(
-    session_id: UUID,
+    session_id: str,
     current_user: User = Depends(get_current_user)
 ):
     """Get current portfolio summary for session."""
     try:
-        portfolio_summary = await portfolio_manager.get_portfolio_summary(session_id)
+        session = await DatabaseService.get_session_by_session_id(session_id, UUID(current_user.id))
+        if not session:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+        portfolio_summary = await portfolio_manager.get_portfolio_summary(session.id)
         
         if not portfolio_summary:
             raise HTTPException(
@@ -510,13 +639,16 @@ async def get_portfolio(
 
 @app.get("/{session_id}/metrics")
 async def get_session_metrics(
-    session_id: UUID,
+    session_id: str,
     current_user: User = Depends(get_current_user)
 ):
     """Get performance metrics for session."""
     try:
         # Get real-time metrics from session manager
-        metrics = await session_manager.get_session_metrics(session_id)
+        session = await DatabaseService.get_session_by_session_id(session_id, UUID(current_user.id))
+        if not session:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+        metrics = await session_manager.get_session_metrics(session.id)
         
         if not metrics:
             raise HTTPException(
@@ -526,7 +658,7 @@ async def get_session_metrics(
         
         # Convert to SessionMetrics model
         session_metrics = SessionMetrics(
-            session_id=session_id,
+            session_id=session.id,
             total_trades=metrics.get('total_trades', 0),
             winning_trades=metrics.get('winning_trades', 0),
             losing_trades=metrics.get('losing_trades', 0),
@@ -559,22 +691,22 @@ async def get_session_metrics(
 
 @app.get("/{session_id}/status")
 async def get_session_status(
-    session_id: UUID,
+    session_id: str,
     current_user: User = Depends(get_current_user)
 ) -> Dict[str, Any]:
     """Get detailed session status including execution metrics."""
     try:
-        # Get session metrics
-        session_metrics = await session_manager.get_session_metrics(session_id)
-        
-        # Get execution status
-        execution_status = await strategy_executor.get_execution_status(session_id)
-        
-        # Get performance metrics
-        performance_metrics = await performance_monitor.get_performance_summary(session_id)
-        
+        # Resolve session and gather status data
+        session = await DatabaseService.get_session_by_session_id(session_id, UUID(current_user.id))
+        if not session:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+
+        session_metrics = await session_manager.get_session_metrics(session.id)
+        execution_status = await strategy_executor.get_execution_status(session.id)
+        performance_metrics = await performance_monitor.get_performance_summary(session.id)
+
         return {
-            "session_id": str(session_id),
+            "session_id": str(session.id),
             "session_metrics": session_metrics,
             "execution_status": execution_status,
             "performance_metrics": performance_metrics,
@@ -591,14 +723,17 @@ async def get_session_status(
 
 @app.get("/{session_id}/trades")
 async def get_session_trades(
-    session_id: UUID,
+    session_id: str,
     limit: int = 50,
     offset: int = 0,
     current_user: User = Depends(get_current_user)
 ):
     """Get trades for session."""
     try:
-        trades = await portfolio_manager.get_recent_trades(session_id, limit)
+        session = await DatabaseService.get_session_by_session_id(session_id, UUID(current_user.id))
+        if not session:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+        trades = await portfolio_manager.get_recent_trades(session.id, limit)
         return ListResponse.trades_response(trades, "Trades retrieved successfully")
         
     except Exception as e:
@@ -611,16 +746,19 @@ async def get_session_trades(
 
 @app.get("/{session_id}/chart")
 async def get_chart_data(
-    session_id: UUID,
+    session_id: str,
     limit: int = 1000,
     current_user: User = Depends(get_current_user)
 ):
     """Get chart data for session."""
     try:
-        chart_data = await session_event_publisher.get_recent_chart_data(session_id, limit)
+        session = await DatabaseService.get_session_by_session_id(session_id, UUID(current_user.id))
+        if not session:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+        chart_data = await session_event_publisher.get_recent_chart_data(session.id, limit)
         
         response_data = SessionChartData(
-            session_id=session_id,
+            session_id=session.id,
             data_points=chart_data,
             updated_at=time.time()
         )

@@ -83,6 +83,7 @@ class Trade:
 class Portfolio:
     """Portfolio state for a session."""
     session_id: UUID
+    user_id: UUID
     cash_balance: Decimal
     total_value: Decimal
     total_pnl: Decimal
@@ -139,6 +140,7 @@ class PortfolioManager:
     async def create_portfolio(
         self,
         session_id: UUID,
+        user_id: UUID,
         initial_capital: float = 100000.0
     ) -> Portfolio:
         """Create a new portfolio for a session."""
@@ -147,6 +149,7 @@ class PortfolioManager:
             
             portfolio = Portfolio(
                 session_id=session_id,
+                user_id=user_id,
                 cash_balance=initial_capital_decimal,
                 total_value=initial_capital_decimal,
                 total_pnl=Decimal('0'),
@@ -665,11 +668,17 @@ class PortfolioManager:
         try:
             # Get current portfolio summary
             portfolio_summary = await self.get_portfolio_summary(session_id)
+            # Determine user_id for event routing
+            user_id_value = None
+            if session_id in self.portfolios:
+                # stored as UUID or string; normalize to string
+                uid = self.portfolios[session_id].user_id
+                user_id_value = str(uid)
             
             # Publish trade executed event
             await session_event_publisher.publish_trade_executed(
                 session_id=session_id,
-                user_id=trade.session_id,  # TODO: Get actual user_id
+                user_id=UUID(user_id_value) if user_id_value else trade.session_id,  # fallback
                 trade_data=asdict(trade)
             )
             
@@ -677,7 +686,7 @@ class PortfolioManager:
             if portfolio_summary:
                 await session_event_publisher.publish_portfolio_update(
                     session_id=session_id,
-                    user_id=trade.session_id,  # TODO: Get actual user_id
+                    user_id=UUID(user_id_value) if user_id_value else trade.session_id,
                     portfolio_data=portfolio_summary
                 )
             

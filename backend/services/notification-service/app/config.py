@@ -15,8 +15,8 @@ class Settings:
     MAX_CONNECTIONS_PER_USER: int = int(os.getenv("MAX_CONNECTIONS_PER_USER", "5"))
     CONNECTION_CLEANUP_INTERVAL: int = int(os.getenv("CONNECTION_CLEANUP_INTERVAL", "60"))  # 1 minute
     
-    # Authentication
-    JWT_SECRET: str = os.getenv("JWT_SECRET", "your-secret-key")
+    # Authentication (support both JWT_SECRET_KEY and JWT_SECRET for parity with other services)
+    JWT_SECRET: str = os.getenv("JWT_SECRET_KEY", os.getenv("JWT_SECRET", "your-secret-key-change-in-production"))
     JWT_ALGORITHM: str = os.getenv("JWT_ALGORITHM", "HS256")
     
     # Kafka configuration

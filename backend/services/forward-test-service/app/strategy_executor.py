@@ -122,8 +122,8 @@ class StrategyExecutionService:
             
             self.execution_contexts[session_id] = context
             
-            # Create portfolio for this session
-            await portfolio_manager.create_portfolio(session_id, initial_capital)
+            # Create portfolio for this session (store user_id for event routing)
+            await portfolio_manager.create_portfolio(session_id, user_id, initial_capital)
             
             # Start execution task
             task = asyncio.create_task(

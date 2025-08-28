@@ -28,7 +28,8 @@ async def proxy_to_forward_test_service(
     path: str,
     current_user,
     body: Dict[str, Any] = None,
-    params: Dict[str, str] = None
+    params: Dict[str, str] = None,
+    request: Request = None
 ) -> Dict[str, Any]:
     """Helper function to proxy requests to Forward Testing Service."""
     try:
@@ -36,6 +37,11 @@ async def proxy_to_forward_test_service(
             "Content-Type": "application/json",
             "X-User-ID": str(current_user.id)
         }
+        # Forward Authorization header for downstream auth services
+        if request:
+            auth_header = request.headers.get("Authorization")
+            if auth_header:
+                headers["Authorization"] = auth_header
         
         async with httpx.AsyncClient(timeout=30.0) as client:
             url = f"{FORWARD_TEST_SERVICE_URL}{path}"
@@ -91,7 +97,7 @@ async def create_session(
 ):
     """Create a new forward testing session."""
     body = await request.json()
-    return await proxy_to_forward_test_service("POST", "/", current_user, body)
+    return await proxy_to_forward_test_service("POST", "/", current_user, body, request=request)
 
 
 @router.get("/")  
@@ -101,16 +107,17 @@ async def list_sessions(
 ):
     """List user's forward testing sessions."""
     params = dict(request.query_params)
-    return await proxy_to_forward_test_service("GET", "/", current_user, params=params)
+    return await proxy_to_forward_test_service("GET", "/", current_user, params=params, request=request)
 
 
 @router.get("/{session_id}")
 async def get_session(
     session_id: str,
+    request: Request,
     current_user = Depends(get_current_user)
 ):
     """Get a specific forward testing session."""
-    return await proxy_to_forward_test_service("GET", f"/{session_id}", current_user)
+    return await proxy_to_forward_test_service("GET", f"/{session_id}", current_user, request=request)
 
 
 @router.patch("/{session_id}")
@@ -121,52 +128,77 @@ async def update_session(
 ):
     """Update a forward testing session."""
     body = await request.json()
-    return await proxy_to_forward_test_service("PATCH", f"/{session_id}", current_user, body)
+    return await proxy_to_forward_test_service("PATCH", f"/{session_id}", current_user, body, request=request)
 
 
 @router.delete("/{session_id}")
 async def delete_session(
     session_id: str,
+    request: Request,
     current_user = Depends(get_current_user)
 ):
     """Delete a forward testing session."""
-    return await proxy_to_forward_test_service("DELETE", f"/{session_id}", current_user)
+    return await proxy_to_forward_test_service("DELETE", f"/{session_id}", current_user, request=request)
 
 
 @router.post("/{session_id}/start")
 async def start_session(
     session_id: str,
+    request: Request,
     current_user = Depends(get_current_user)
 ):
     """Start a forward testing session."""
-    return await proxy_to_forward_test_service("POST", f"/{session_id}/start", current_user)
+    return await proxy_to_forward_test_service("POST", f"/{session_id}/start", current_user, request=request)
 
 
 @router.post("/{session_id}/stop")
 async def stop_session(
     session_id: str,
+    request: Request,
     current_user = Depends(get_current_user)
 ):
     """Stop a forward testing session."""
-    return await proxy_to_forward_test_service("POST", f"/{session_id}/stop", current_user)
+    return await proxy_to_forward_test_service("POST", f"/{session_id}/stop", current_user, request=request)
+
+
+@router.post("/{session_id}/pause")
+async def pause_session(
+    session_id: str,
+    request: Request,
+    current_user = Depends(get_current_user)
+):
+    """Pause a forward testing session."""
+    return await proxy_to_forward_test_service("POST", f"/{session_id}/pause", current_user, request=request)
+
+
+@router.post("/{session_id}/resume")
+async def resume_session(
+    session_id: str,
+    request: Request,
+    current_user = Depends(get_current_user)
+):
+    """Resume a forward testing session."""
+    return await proxy_to_forward_test_service("POST", f"/{session_id}/resume", current_user, request=request)
 
 
 @router.get("/{session_id}/portfolio")
 async def get_portfolio(
     session_id: str,
+    request: Request,
     current_user = Depends(get_current_user)
 ):
     """Get session portfolio."""
-    return await proxy_to_forward_test_service("GET", f"/{session_id}/portfolio", current_user)
+    return await proxy_to_forward_test_service("GET", f"/{session_id}/portfolio", current_user, request=request)
 
 
 @router.get("/{session_id}/metrics")
 async def get_metrics(
     session_id: str,
+    request: Request,
     current_user = Depends(get_current_user)
 ):
     """Get session metrics."""
-    return await proxy_to_forward_test_service("GET", f"/{session_id}/metrics", current_user)
+    return await proxy_to_forward_test_service("GET", f"/{session_id}/metrics", current_user, request=request)
 
 
 @router.get("/{session_id}/trades")
@@ -177,7 +209,7 @@ async def get_trades(
 ):
     """Get session trades."""
     params = dict(request.query_params)
-    return await proxy_to_forward_test_service("GET", f"/{session_id}/trades", current_user, params=params)
+    return await proxy_to_forward_test_service("GET", f"/{session_id}/trades", current_user, params=params, request=request)
 
 
 @router.get("/{session_id}/chart")

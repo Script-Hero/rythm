@@ -69,48 +69,76 @@ class DatabaseService:
     
     @classmethod
     async def create_session(
-        cls, 
-        user_id: UUID, 
+        cls,
+        user_id: UUID,
         session_data: ForwardTestSessionCreate,
         strategy_snapshot: Dict[str, Any]
-    ) -> ForwardTestSessionResponse:
-        """Create a new forward testing session."""
-        session_id = uuid4()
+    ) -> Tuple[ForwardTestSessionResponse, str]:
+        """Create a new forward testing session (aligned to DB schema)."""
+        row_id = uuid4()
+        # External string session identifier for cross-service linking
+        session_id_str = f"ft_{int(datetime.utcnow().timestamp() * 1000)}"
         now = datetime.utcnow()
-        
+
+        # Derive values expected by schema
+        strategy_name = (strategy_snapshot or {}).get("name") or "Strategy"
+        name = session_data.session_name or strategy_name
+        timeframe = "1m"  # default if not provided by caller
+
+        # Persist full settings for future analytics and controls
+        settings_obj: Dict[str, Any] = {
+            "symbol": session_data.symbol,
+            "timeframe": timeframe,
+            "starting_balance": str(session_data.starting_balance),
+            "max_position_size_percent": session_data.max_position_size_percent,
+            "commission_rate": session_data.commission_rate,
+            "slippage_rate": session_data.slippage_rate,
+            "risk_management": session_data.risk_management or {},
+        }
+
         async with cls._pool.acquire() as conn:
-            # Insert into forward_test_sessions
-            await conn.execute("""
+            await conn.execute(
+                """
                 INSERT INTO forward_test_sessions (
-                    id, user_id, strategy_id, strategy_snapshot, symbol,
-                    session_name, description, status, starting_balance,
-                    current_balance, current_position_size,
-                    max_position_size_percent, commission_rate, slippage_rate,
-                    risk_management, created_at
-                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
-            """,
-                session_id, user_id, session_data.strategy_id, json.dumps(strategy_snapshot),
-                session_data.symbol, session_data.session_name, session_data.description,
-                SessionStatus.PENDING, session_data.starting_balance, session_data.starting_balance,
-                Decimal('0'), session_data.max_position_size_percent,
-                session_data.commission_rate, session_data.slippage_rate,
-                json.dumps(session_data.risk_management) if session_data.risk_management else None,
-                now
+                    id, session_id, user_id, strategy_id, name, strategy_name,
+                    strategy_snapshot, symbol, timeframe, status, settings,
+                    initial_balance, current_balance, created_at
+                ) VALUES (
+                    $1, $2, $3, $4, $5, $6,
+                    $7, $8, $9, $10, $11,
+                    $12, $13, $14
+                )
+                """,
+                row_id,
+                session_id_str,
+                user_id,
+                session_data.strategy_id,
+                name,
+                strategy_name,
+                json.dumps(strategy_snapshot),
+                session_data.symbol,
+                timeframe,
+                SessionStatus.STOPPED.value,
+                json.dumps(settings_obj),
+                session_data.starting_balance,
+                session_data.starting_balance,
+                now,
             )
-            
-            # Return the created session
+
+            # Return mapped response (using our shared model fields)
             return ForwardTestSessionResponse(
-                id=session_id,
+                id=row_id,
+                session_id=session_id_str,
                 user_id=user_id,
                 strategy_id=session_data.strategy_id,
                 strategy_snapshot=strategy_snapshot,
                 symbol=session_data.symbol,
-                session_name=session_data.session_name,
-                description=session_data.description,
-                status=SessionStatus.PENDING,
+                session_name=name,
+                description=None,
+                status=SessionStatus.STOPPED,
                 starting_balance=session_data.starting_balance,
                 current_balance=session_data.starting_balance,
-                current_position_size=Decimal('0'),
+                current_position_size=Decimal("0"),
                 max_position_size_percent=session_data.max_position_size_percent,
                 commission_rate=session_data.commission_rate,
                 slippage_rate=session_data.slippage_rate,
@@ -118,58 +146,166 @@ class DatabaseService:
                 created_at=now,
                 started_at=None,
                 stopped_at=None,
-                last_signal_at=None
-            )
+                last_signal_at=None,
+                total_trades=0,
+                winning_trades=0,
+                losing_trades=0,
+                total_pnl=Decimal("0"),
+                unrealized_pnl=Decimal("0"),
+                max_drawdown=Decimal("0"),
+            ), session_id_str
     
     @classmethod
     async def get_session(cls, session_id: UUID, user_id: UUID) -> Optional[ForwardTestSessionResponse]:
-        """Get session by ID."""
+        """Get session by UUID id (internal)."""
         async with cls._pool.acquire() as conn:
-            row = await conn.fetchrow("""
-                SELECT * FROM forward_test_sessions 
+            row = await conn.fetchrow(
+                """
+                SELECT * FROM forward_test_sessions
                 WHERE id = $1 AND user_id = $2
-            """, session_id, user_id)
-            
+                """,
+                session_id,
+                user_id,
+            )
+
             if not row:
                 return None
-            
-            return ForwardTestSessionResponse(
-                id=row['id'],
-                user_id=row['user_id'],
-                strategy_id=row['strategy_id'],
-                strategy_snapshot=json.loads(row['strategy_snapshot']),
-                symbol=row['symbol'],
-                session_name=row['session_name'],
-                description=row['description'],
-                status=SessionStatus(row['status']),
-                starting_balance=row['starting_balance'],
-                current_balance=row['current_balance'],
-                current_position_size=row['current_position_size'],
-                max_position_size_percent=row['max_position_size_percent'],
-                commission_rate=row['commission_rate'],
-                slippage_rate=row['slippage_rate'],
-                risk_management=json.loads(row['risk_management']) if row['risk_management'] else None,
-                created_at=row['created_at'],
-                started_at=row['started_at'],
-                stopped_at=row['stopped_at'],
-                last_signal_at=row['last_signal_at'],
-                total_trades=row['total_trades'] or 0,
-                winning_trades=row['winning_trades'] or 0,
-                losing_trades=row['losing_trades'] or 0,
-                total_pnl=row['total_pnl'] or Decimal('0'),
-                unrealized_pnl=row['unrealized_pnl'] or Decimal('0'),
-                max_drawdown=row['max_drawdown'] or Decimal('0')
+
+            return cls._map_row_to_session(row)
+
+    @classmethod
+    async def get_session_by_session_id(
+        cls, session_id_str: str, user_id: UUID
+    ) -> Optional[ForwardTestSessionResponse]:
+        """Get session by external string session_id (ft_...)."""
+        async with cls._pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """
+                SELECT * FROM forward_test_sessions
+                WHERE session_id = $1 AND user_id = $2
+                """,
+                session_id_str,
+                user_id,
             )
+
+            if not row:
+                return None
+
+            return cls._map_row_to_session(row)
+
+    @classmethod
+    def _map_row_to_session(cls, row: asyncpg.Record) -> ForwardTestSessionResponse:
+        """Map DB row (new schema) to shared response model (legacy fields)."""
+        # Settings may be dict or JSON string
+        settings_val = row.get("settings")
+        if isinstance(settings_val, str):
+            try:
+                settings_obj = json.loads(settings_val)
+            except Exception:
+                settings_obj = {}
+        else:
+            settings_obj = settings_val or {}
+
+        def _get_setting(key: str, default=None):
+            return settings_obj.get(key, default)
+
+        return ForwardTestSessionResponse(
+            id=row["id"],
+            session_id=row.get("session_id"),
+            user_id=row["user_id"],
+            strategy_id=row["strategy_id"],
+            strategy_snapshot=json.loads(row["strategy_snapshot"]) if isinstance(row["strategy_snapshot"], str) else row["strategy_snapshot"],
+            symbol=row["symbol"],
+            session_name=row.get("name"),
+            description=None,
+            status=SessionStatus(row["status"]),
+            starting_balance=row.get("initial_balance"),
+            current_balance=row.get("current_balance") or row.get("initial_balance"),
+            current_position_size=Decimal("0"),
+            max_position_size_percent=_get_setting("max_position_size_percent", 0.25),
+            commission_rate=_get_setting("commission_rate", 0.001),
+            slippage_rate=_get_setting("slippage_rate", 0.0005),
+            risk_management=_get_setting("risk_management", {}),
+            created_at=row["created_at"],
+            started_at=row.get("start_time"),
+            stopped_at=row.get("end_time"),
+            last_signal_at=None,
+            total_trades=row.get("trade_count") or 0,
+            winning_trades=0,
+            losing_trades=0,
+            total_pnl=row.get("total_pnl") or Decimal("0"),
+            unrealized_pnl=Decimal("0"),
+            max_drawdown=row.get("max_drawdown") or Decimal("0"),
+        )
+
+    @classmethod
+    async def list_sessions(
+        cls,
+        user_id: UUID,
+        status_filter: Optional[SessionStatus] = None,
+        symbol: Optional[str] = None,
+        limit: int = 20,
+        offset: int = 0
+    ) -> List[ForwardTestSessionResponse]:
+        """List sessions for a user with optional filters and pagination."""
+        async with cls._pool.acquire() as conn:
+            conditions = ["user_id = $1"]
+            params: List[Any] = [user_id]
+            param_idx = 2
+
+            if status_filter is not None:
+                conditions.append(f"status = ${param_idx}")
+                params.append(status_filter.value)
+                param_idx += 1
+
+            if symbol:
+                conditions.append(f"symbol = ${param_idx}")
+                params.append(symbol)
+                param_idx += 1
+
+            where_clause = " AND ".join(conditions)
+            query = f"""
+                SELECT * FROM forward_test_sessions
+                WHERE {where_clause}
+                ORDER BY created_at DESC
+                LIMIT ${param_idx} OFFSET ${param_idx + 1}
+            """
+            params.extend([limit, offset])
+
+            rows = await conn.fetch(query, *params)
+            return [cls._map_row_to_session(row) for row in rows]
+
+    @classmethod
+    async def delete_session(cls, session_id: UUID, user_id: UUID) -> bool:
+        """Delete a session by internal UUID (cascades will remove child rows)."""
+        async with cls._pool.acquire() as conn:
+            result = await conn.execute(
+                """
+                DELETE FROM forward_test_sessions
+                WHERE id = $1 AND user_id = $2
+                """,
+                session_id,
+                user_id,
+            )
+            return result == "DELETE 1"
     
     @classmethod
     async def update_session_status(cls, session_id: UUID, status: SessionStatus) -> bool:
         """Update session status."""
         async with cls._pool.acquire() as conn:
-            result = await conn.execute("""
-                UPDATE forward_test_sessions 
+            # Persist only statuses allowed by DB CHECK constraint
+            allowed = {"STOPPED", "RUNNING", "PAUSED", "ERROR", "COMPLETED"}
+            persist_status = status.value if status.value in allowed else "STOPPED"
+            result = await conn.execute(
+                """
+                UPDATE forward_test_sessions
                 SET status = $1, updated_at = $2
                 WHERE id = $3
-            """, status.value, datetime.utcnow(), session_id)
+                """,
+                persist_status,
+                datetime.utcnow(),
+                session_id,
+            )
             
             return result == "UPDATE 1"
     
@@ -263,8 +399,9 @@ class MarketDataService:
         """Subscribe to real-time market data for symbol."""
         try:
             async with httpx.AsyncClient() as client:
+                # Align with Market Data Service route: /symbols/{symbol}/subscribe
                 response = await client.post(
-                    f"{settings.MARKET_DATA_SERVICE_URL}/subscribe/{symbol}"
+                    f"{settings.MARKET_DATA_SERVICE_URL}/symbols/{symbol}/subscribe"
                 )
                 return response.status_code == 200
                 
@@ -277,20 +414,25 @@ class StrategyService:
     """Service for interacting with Strategy Service."""
     
     @classmethod
-    async def get_compiled_strategy(cls, strategy_id: UUID) -> Optional[Dict[str, Any]]:
-        """Get compiled strategy from Strategy Service."""
+    async def get_compiled_strategy(cls, strategy_id: UUID, user_token: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        """Get full strategy record from Strategy Service (unwraps StandardResponse)."""
         try:
+            headers = {"Authorization": f"Bearer {user_token}"} if user_token else {}
             async with httpx.AsyncClient() as client:
                 response = await client.get(
-                    f"{settings.STRATEGY_SERVICE_URL}/{strategy_id}"
+                    f"{settings.STRATEGY_SERVICE_URL}/{strategy_id}",
+                    headers=headers
                 )
-                
+
                 if response.status_code == 200:
-                    return response.json()
-                    
+                    payload = response.json()
+                    if isinstance(payload, dict) and "data" in payload:
+                        return payload.get("data")
+                    return payload
+
         except Exception as e:
-            logger.error("Failed to get strategy", strategy_id=strategy_id, error=str(e))
-        
+            logger.error("Failed to get strategy", strategy_id=str(strategy_id), error=str(e))
+
         return None
     
     @classmethod

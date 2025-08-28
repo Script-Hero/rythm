@@ -12,13 +12,13 @@ from pydantic import BaseModel, Field, validator
 
 
 class SessionStatus(str, Enum):
-    """Forward testing session status."""
-    PENDING = "pending"
-    RUNNING = "running"
-    PAUSED = "paused"
-    STOPPED = "stopped"
-    COMPLETED = "completed"
-    ERROR = "error"
+    """Forward testing session status (DB uses uppercase)."""
+    PENDING = "PENDING"
+    RUNNING = "RUNNING"
+    PAUSED = "PAUSED"
+    STOPPED = "STOPPED"
+    COMPLETED = "COMPLETED"
+    ERROR = "ERROR"
 
 
 class TradeAction(str, Enum):
@@ -29,12 +29,12 @@ class TradeAction(str, Enum):
 
 
 class OrderStatus(str, Enum):
-    """Order execution status."""
-    PENDING = "pending"
-    FILLED = "filled"
-    PARTIAL = "partial"
-    CANCELLED = "cancelled"
-    REJECTED = "rejected"
+    """Order execution status (DB uses uppercase)."""
+    PENDING = "PENDING"
+    FILLED = "FILLED"
+    PARTIAL = "PARTIAL"
+    CANCELLED = "CANCELLED"
+    REJECTED = "REJECTED"
 
 
 # Request/Response Models
@@ -66,6 +66,7 @@ class ForwardTestSessionUpdate(BaseModel):
 class ForwardTestSessionResponse(BaseModel):
     """Forward testing session response."""
     id: UUID
+    session_id: Optional[str] = None
     user_id: UUID
     strategy_id: UUID
     strategy_snapshot: Dict[str, Any]  # Full strategy JSON for historical analysis

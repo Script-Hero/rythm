@@ -83,26 +83,26 @@ async def search_symbols(request: Request):
     return await proxy_to_market_data_service("GET", "/symbols/search", params=params)
 
 
-@router.get("/symbols/{symbol}/latest")
+@router.get("/symbols/{symbol:path}/latest")
 async def get_latest_prices(symbol: str, request: Request):
     """Get latest prices for symbol."""
     params = dict(request.query_params)
     return await proxy_to_market_data_service("GET", f"/symbols/{symbol}/latest", params=params)
 
 
-@router.get("/symbols/{symbol}/stream")
+@router.get("/symbols/{symbol:path}/stream")
 async def get_price_stream_info(symbol: str):
     """Get price stream info for symbol."""
     return await proxy_to_market_data_service("GET", f"/symbols/{symbol}/stream")
 
 
-@router.post("/symbols/{symbol}/subscribe")
+@router.post("/symbols/{symbol:path}/subscribe")
 async def subscribe_to_symbol(symbol: str):
     """Subscribe to real-time data for symbol."""
     return await proxy_to_market_data_service("POST", f"/symbols/{symbol}/subscribe")
 
 
-@router.delete("/symbols/{symbol}/unsubscribe")
+@router.delete("/symbols/{symbol:path}/unsubscribe")
 async def unsubscribe_from_symbol(symbol: str):
     """Unsubscribe from real-time data for symbol."""
     return await proxy_to_market_data_service("DELETE", f"/symbols/{symbol}/unsubscribe")
@@ -134,7 +134,7 @@ async def validate_symbol_date_range(request: Request):
     return await proxy_to_market_data_service("POST", "/validate", body)
 
 
-@router.get("/symbols/{symbol}/date-range")
+@router.get("/symbols/{symbol:path}/date-range")
 async def get_symbol_date_range(symbol: str):
     """Get available date range for a symbol."""
     return await proxy_to_market_data_service("GET", f"/symbols/{symbol}/date-range")

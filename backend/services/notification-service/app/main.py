@@ -88,6 +88,7 @@ async def websocket_endpoint(websocket: WebSocket, token: str = None):
     Main WebSocket endpoint for real-time notifications.
     Authenticates users and manages their connection lifecycle.
     """
+    user_id: Optional[UUID] = None
     try:
         # Accept connection first
         await websocket.accept()
@@ -144,12 +145,15 @@ async def websocket_endpoint(websocket: WebSocket, token: str = None):
                 }))
                 
     except WebSocketDisconnect:
-        logger.info("WebSocket disconnected normally", user_id=str(user_id))
+        # user_id may not be set if disconnect occurred before auth
+        logger.info("WebSocket disconnected normally", user_id=str(user_id) if user_id else None)
     except Exception as e:
-        logger.error("WebSocket connection error", user_id=str(user_id), error=str(e))
+        logger.error("WebSocket connection error", user_id=str(user_id) if user_id else None, error=str(e))
     finally:
-        # Clean up connection
-        await connection_manager.disconnect_user(user_id)
+        # Clean up connection (only if authenticated and user_id available)
+        if user_id is not None:
+            # Prefer passing websocket to remove just this connection
+            await connection_manager.disconnect_user(user_id, websocket)
 
 
 async def handle_websocket_message(user_id: UUID, message: str):

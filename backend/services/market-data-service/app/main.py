@@ -75,7 +75,7 @@ app = FastAPI(
 
 
 # Core Redis Sliding Window Implementation
-@app.get("/symbols/{symbol}/latest")
+@app.get("/symbols/{symbol:path}/latest")
 async def get_latest_prices(symbol: str, limit: int = 100) -> Dict[str, Any]:
     """
     Get latest N price points from Redis sliding window.
@@ -97,7 +97,7 @@ async def get_latest_prices(symbol: str, limit: int = 100) -> Dict[str, Any]:
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/symbols/{symbol}/stream")
+@app.get("/symbols/{symbol:path}/stream")
 async def get_price_stream_info(symbol: str) -> Dict[str, Any]:
     """Get information about the price stream for a symbol."""
     try:
@@ -111,7 +111,7 @@ async def get_price_stream_info(symbol: str) -> Dict[str, Any]:
         raise HTTPException(status_code=404, detail=f"Stream not found for {symbol}")
 
 
-@app.post("/symbols/{symbol}/subscribe")
+@app.post("/symbols/{symbol:path}/subscribe")
 async def subscribe_to_symbol(symbol: str, background_tasks: BackgroundTasks) -> Dict[str, Any]:
     """
     Subscribe to real-time data for a symbol.
@@ -142,7 +142,7 @@ async def subscribe_to_symbol(symbol: str, background_tasks: BackgroundTasks) ->
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.delete("/symbols/{symbol}/unsubscribe")
+@app.delete("/symbols/{symbol:path}/unsubscribe")
 async def unsubscribe_from_symbol(symbol: str) -> Dict[str, Any]:
     """Unsubscribe from real-time data for a symbol."""
     try:
@@ -408,7 +408,7 @@ async def validate_symbol_and_dates(request: Dict[str, Any]):
         }
 
 
-@app.get("/symbols/{symbol}/date-range")
+@app.get("/symbols/{symbol:path}/date-range")
 async def get_symbol_date_range(symbol: str):
     """
     Get available date range for a symbol - compatibility endpoint.

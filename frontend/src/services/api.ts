@@ -148,13 +148,14 @@ class ApiService {
     });
     
     const token = this.getAuthToken();
+    // Build config ensuring options.headers does not overwrite Authorization
     const config: RequestInit = {
+      ...options,
       headers: {
         'Content-Type': 'application/json',
         ...(token && { 'Authorization': `Bearer ${token}` }),
-        ...options.headers,
+        ...(options.headers || {}),
       },
-      ...options,
     };
 
     try {
@@ -198,11 +199,12 @@ class ApiService {
       }
 
       const responseData = await response.json();
+      const hasStandardSuccess = Object.prototype.hasOwnProperty.call(responseData, 'success');
       console.log('✅ Frontend: API Success', {
         endpoint: endpoint,
         responseKeys: Object.keys(responseData),
-        hasData: !!responseData.data,
-        success: responseData.success
+        hasData: !!(responseData && responseData.data !== undefined),
+        success: hasStandardSuccess ? responseData.success : true
       });
       
       return responseData;
@@ -519,11 +521,59 @@ class ApiService {
 
   // Forward Testing (Multi-Session Architecture)
   async createForwardTestSession(data: { name: string; strategy: any; settings: any }): Promise<{ success: boolean; session_id: string; message: string }> {
-    return this.request('/api/forward-test/', {
+    // Map FE payload to BE ForwardTestSessionCreate schema
+    const strategyId = data?.strategy?.id || data?.strategy?.strategy_id;
+    const settings = data?.settings || {};
+
+    // Commission mapping: if percentage, convert to fraction (e.g., 0.1% -> 0.001)
+    const commissionType = settings.commissionType || 'percentage';
+    let commission_rate = 0.001; // sensible default 0.1%
+    if (typeof settings.commission === 'number') {
+      commission_rate = commissionType === 'percentage'
+        ? Number(settings.commission) / 100
+        : Number(settings.commission);
+    }
+
+    // Slippage is already provided as a fraction in the UI defaults (e.g., 0.001 for 0.1%)
+    const slippage_rate = typeof settings.slippage === 'number' ? Number(settings.slippage) : 0.0005;
+
+    // Fallback for position size percent if not expressible from UI settings
+    const max_position_size_percent = typeof settings.maxPositionSizePercent === 'number'
+      ? Number(settings.maxPositionSizePercent)
+      : 0.25; // default 25%
+
+    const bePayload = {
+      strategy_id: strategyId,
+      symbol: settings.symbol,
+      starting_balance: Number(settings.initialBalance),
+      max_position_size_percent,
+      commission_rate,
+      slippage_rate,
+      session_name: data.name,
+      description: settings.description || undefined,
+      risk_management: {
+        max_drawdown: settings.maxDrawdown,
+        max_daily_trades: settings.maxDailyTrades,
+        max_daily_loss: settings.maxDailyLoss,
+        stop_loss_default: settings.stopLossDefault,
+        take_profit_default: settings.takeProfitDefault,
+        auto_stop: settings.autoStop,
+        max_positions: settings.maxPositions,
+      }
+    };
+
+    const res = await this.request('/api/forward-test/', {
       method: 'POST',
       headers: {},
-      body: JSON.stringify(data),
+      body: JSON.stringify(bePayload),
     });
+
+    // Normalize response to what callers expect
+    return {
+      success: !!res?.success,
+      session_id: res?.data?.session_id || res?.session_id,
+      message: res?.message || ''
+    };
   }
 
   async startForwardTestSession(sessionId: string): Promise<{ success: boolean; message: string }> {
@@ -532,16 +582,15 @@ class ApiService {
     });
   }
 
-  // NOTE: Backend doesn't have pause - using stop instead
+  // Pause/resume endpoints
   async pauseForwardTest(sessionId: string): Promise<{ success: boolean; message: string }> {
-    return this.request(`/api/forward-test/${sessionId}/stop`, {
+    return this.request(`/api/forward-test/${sessionId}/pause`, {
       method: 'POST'
     });
   }
 
-  // NOTE: Backend doesn't have resume - using start instead  
   async resumeForwardTest(sessionId: string): Promise<{ success: boolean; message: string }> {
-    return this.request(`/api/forward-test/${sessionId}/start`, {
+    return this.request(`/api/forward-test/${sessionId}/resume`, {
       method: 'POST'
     });
   }
@@ -573,24 +622,17 @@ class ApiService {
   async getForwardTestSessionDetail(sessionId: string): Promise<{ 
     success: boolean; 
     session_detail: {
-      session: {
-        id: string;
-        name: string;
-        strategy: any;
-        status: string;
-        start_time: string;
-        symbol: string;
-        settings: any;
-        portfolioValue: number;
-      };
+      session: any;
       portfolio: any;
       metrics: any;
       trades: any[];
     }
   }> {
-    return this.request(`/api/forward-test/${sessionId}`, {
-      headers: {}
-    });
+    const res = await this.request(`/api/forward-test/${sessionId}`, { headers: {} });
+    return {
+      success: !!res?.success,
+      session_detail: res?.data?.session_detail || res?.session_detail
+    };
   }
 
   async getForwardTestSymbols(): Promise<{ success: boolean; symbols: string[] }> {
@@ -601,10 +643,18 @@ class ApiService {
   async getUserSessions(): Promise<{ 
     success: boolean; 
     sessions: any[];
+    message?: any;
+    data?: any;
   }> {
-    return this.request('/api/forward-test/', {
-      headers: {}
-    });
+    const res = await this.request('/api/forward-test/', { headers: {} });
+    const sessions = res?.data?.sessions || res?.sessions || [];
+    // Provide both top-level and message-wrapped shapes to satisfy existing callers
+    return {
+      success: !!res?.success,
+      sessions,
+      message: { sessions, count: sessions.length },
+      data: { sessions }
+    };
   }
 
   async restoreSessionData(sessionId: string): Promise<{ 
@@ -636,19 +686,19 @@ class ApiService {
 
   // Portfolio Management - New real-time endpoints
   async getPortfolioSummary(sessionId: string): Promise<any> {
-    return this.request(`/api/forward-testing/${sessionId}/portfolio`);
+    return this.request(`/api/forward-test/${sessionId}/portfolio`);
   }
 
   async getSessionMetrics(sessionId: string): Promise<any> {
-    return this.request(`/api/forward-testing/${sessionId}/metrics`);
+    return this.request(`/api/forward-test/${sessionId}/metrics`);
   }
 
   async getSessionTrades(sessionId: string, limit: number = 50): Promise<any> {
-    return this.request(`/api/forward-testing/${sessionId}/trades?limit=${limit}`);
+    return this.request(`/api/forward-test/${sessionId}/trades?limit=${limit}`);
   }
 
   async getSessionChartData(sessionId: string, limit: number = 1000): Promise<any> {
-    return this.request(`/api/forward-testing/${sessionId}/chart?limit=${limit}`);
+    return this.request(`/api/forward-test/${sessionId}/chart?limit=${limit}`);
   }
 
   // Market Data - Enhanced endpoints

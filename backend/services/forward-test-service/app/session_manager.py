@@ -127,14 +127,20 @@ class SessionStateManager:
                 
                 self.active_sessions[session_id] = runtime_data
                 
-                # Update database status
-                await DatabaseService.update_session_status(session_id, SessionStatus.INITIALIZING)
+                # Update database status (DB only allows RUNNING/PAUSED/STOPPED/ERROR/COMPLETED)
+                # Keep transitional state in memory; persist STOPPED in DB for compatibility
+                await DatabaseService.update_session_status(session_id, SessionStatus.STOPPED)
                 
                 # Get compiled strategy from Strategy Service cache
                 logger.info("🔄 Retrieving compiled strategy from cache", 
                            strategy_id=str(session_data.strategy_id),
                            session_id=str(session_id))
                 
+                # Ensure we pass the actual json_tree to the compiler
+                strategy_tree = strategy_json.get('json_tree') if isinstance(strategy_json, dict) else None
+                if not strategy_tree:
+                    strategy_tree = strategy_json  # assume caller already provided nodes/edges
+
                 if user_token:
                     # Try to get from cache first
                     compiled_strategy = await StrategyService.get_compiled_strategy_binary(
@@ -151,7 +157,7 @@ class SessionStateManager:
                                      strategy_id=str(session_data.strategy_id),
                                      session_id=str(session_id))
                         # Fallback to local compilation
-                        compilation_result = self.strategy_compiler.compile_strategy(strategy_json)
+                        compilation_result = self.strategy_compiler.compile_strategy(strategy_tree)
                         
                         if not compilation_result.success:
                             error_msg = f"Strategy compilation failed: {', '.join(compilation_result.errors)}"
@@ -167,7 +173,7 @@ class SessionStateManager:
                                  strategy_id=str(session_data.strategy_id),
                                  session_id=str(session_id))
                     # Fallback to local compilation when no token
-                    compilation_result = self.strategy_compiler.compile_strategy(strategy_json)
+                    compilation_result = self.strategy_compiler.compile_strategy(strategy_tree)
                     
                     if not compilation_result.success:
                         error_msg = f"Strategy compilation failed: {', '.join(compilation_result.errors)}"
@@ -183,8 +189,8 @@ class SessionStateManager:
                     await self._handle_session_error(session_id, error_msg)
                     return False, error_msg
                 
-                # Mark as ready
-                await DatabaseService.update_session_status(session_id, SessionStatus.READY)
+                # Mark as ready (persist STOPPED in DB; transitional state tracked in memory)
+                await DatabaseService.update_session_status(session_id, SessionStatus.STOPPED)
                 
                 logger.info("Session created successfully", session_id=session_id)
                 return True, None
@@ -516,8 +522,9 @@ class SessionValidator:
         """Validate if state transition is allowed."""
         # Convert to internal enum for validation
         try:
-            current = SessionState(current_state.value)
-            target = SessionState(target_state.value)
+            # Map by enum name to avoid case mismatches (SessionStatus values are lowercase)
+            current = SessionState[current_state.name]
+            target = SessionState[target_state.name]
             
             if target in SessionStateManager.VALID_TRANSITIONS.get(current, []):
                 return True, None
