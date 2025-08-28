@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import { useSearchParams } from "react-router-dom";
-import { getBasicTemplateList } from "../../build_algorithm/basic-templates";
-import { getTemplateList } from "../../build_algorithm/complex-templates";
+import { getBasicTemplateList, getBasicTemplate } from "../../build_algorithm/basic-templates";
+import { getTemplateList, getTemplate } from "../../build_algorithm/complex-templates";
 import { useBacktestValidation } from "../hooks/useBacktestValidation";
 import { apiService } from '@/services/api';
 
@@ -119,9 +119,31 @@ export const BacktestProvider = ({ children }) => {
       // Use override strategy if provided, otherwise use selectedStrategy
       const strategyToUse = overrideStrategy || selectedStrategy;
       
+      // Determine if we have a saved strategy (UUID) or a template key
+      const uuidV4Regex = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+      const isUUID = uuidV4Regex.test(String(strategyToUse));
+
+      // If template, resolve its nodes/edges
+      let jsonTree = null;
+      if (!isUUID) {
+        let template = getBasicTemplate(strategyToUse);
+        if (!template) {
+          template = getTemplate(strategyToUse);
+        }
+        if (template) {
+          jsonTree = {
+            nodes: template.initialNodes || [],
+            edges: template.initialEdges || []
+          };
+        } else {
+          console.warn('⚠️ Backtest: Unknown template key; proceeding without json_tree', { strategy_key: strategyToUse });
+        }
+      }
+
       // Build new job-based backtest request
       const backtestRequestBody = {
-        strategy_id: strategyToUse, // Assumes UUID format for now
+        strategy_id: isUUID ? strategyToUse : undefined,
+        json_tree: jsonTree || undefined,
         symbol: ticker,
         start_date: new Date(fromDate + "T00:00:00.000Z").toISOString(),
         end_date: new Date(toDate + "T23:59:59.999Z").toISOString(),
@@ -131,11 +153,18 @@ export const BacktestProvider = ({ children }) => {
         slippage_rate: "0.0005"
       };
 
-      console.log('Submitting backtest job:', backtestRequestBody);
+      console.log('Submitting backtest job:', {
+        ...backtestRequestBody,
+        has_json_tree: !!backtestRequestBody.json_tree,
+        node_count: backtestRequestBody.json_tree?.nodes?.length || 0,
+        edge_count: backtestRequestBody.json_tree?.edges?.length || 0
+      });
 
       // Submit backtest job using ApiService with authentication
       const jobResponse = await apiService.runBacktest({
         strategy_id: backtestRequestBody.strategy_id,
+        // Pass json_tree through to backend when present
+        ...(backtestRequestBody.json_tree ? { json_tree: backtestRequestBody.json_tree } : {}),
         ticker: backtestRequestBody.symbol,
         fromDate: backtestRequestBody.start_date,
         toDate: backtestRequestBody.end_date,
@@ -155,20 +184,91 @@ export const BacktestProvider = ({ children }) => {
       if (result && result.results) {
         // Process the completed backtest results
         const { results } = result;
-        
+
+        // Pass through backend-provided analytics timeseries for charts
+        const cumulative_returns = results.cumulative_returns || {};
+        const daily_returns = results.daily_returns || {};
+        const monthly_returns = results.monthly_returns || {};
+        const annual_returns = results.annual_returns || {};
+        const average_annual_return = results.average_annual_return || 0;
+        const drawdown = results.drawdown || {};
+        const underwater_curve = results.underwater_curve || {};
+        const rolling_volatility = results.rolling_volatility || {};
+        const rolling_sharpe = results.rolling_sharpe || {};
+        const rolling_beta = results.rolling_beta || {};
+        const trade_return_histogram = results.trade_return_histogram || {};
+
         setBacktestResults({
           key_metrics: {
+            // Core performance metrics
             win_rate: results.win_rate,
             total_return: parseFloat(results.total_return_percent),
             max_drawdown: parseFloat(results.max_drawdown_percent),
             sharpe_ratio: results.sharpe_ratio,
-            total_trades: results.total_trades
+            sortino_ratio: results.sortino_ratio,
+            calmar_ratio: results.calmar_ratio,
+            sterling_ratio: results.sterling_ratio,
+            ulcer_index: results.ulcer_index,
+            total_trades: results.total_trades,
+            
+            // Trade analysis metrics from backend
+            winning_trades: results.winning_trades,
+            losing_trades: results.losing_trades,
+            average_trade: parseFloat(results.average_trade || 0),
+            largest_win: parseFloat(results.largest_win || 0), 
+            largest_loss: parseFloat(results.largest_loss || 0),
+            consecutive_wins: results.consecutive_wins,
+            consecutive_losses: results.consecutive_losses,
+            gross_profit: parseFloat(results.gross_profit || 0),
+            gross_loss: parseFloat(results.gross_loss || 0),
+            net_profit: parseFloat(results.net_profit || 0),
+            profit_factor: results.profit_factor,
+            
+            // Portfolio metrics
+            initial_portfolio_value: parseFloat(results.initial_portfolio_value || 100000),
+            final_portfolio_value: parseFloat(results.final_portfolio_value || 100000),
+            
+            // Volatility and risk
+            volatility: results.volatility,
+            
+            // Derived metrics for compatibility
+            avg_win: results.winning_trades > 0 ? parseFloat(results.gross_profit) / results.winning_trades : 0,
+            avg_loss: results.losing_trades > 0 ? Math.abs(parseFloat(results.gross_loss)) / results.losing_trades : 0,
+            win_loss_ratio: results.losing_trades > 0 ? (parseFloat(results.gross_profit) / results.winning_trades) / (Math.abs(parseFloat(results.gross_loss)) / results.losing_trades) : 0,
+            expectancy: parseFloat(results.average_trade || 0),
+            
+            // Missing metrics with placeholder values
+            cagr: parseFloat(results.total_return_percent) / 100, // Approximation
+            information_ratio: results.sharpe_ratio || 0, // Fallback to Sharpe
+            turnover_ratio: 0, // Not calculated in backend yet
+            trades_per_day: results.total_periods > 0 ? results.total_trades / results.total_periods : 0,
+            capacity: 1000000, // Placeholder value
+            kelly_criterion: results.kelly_criterion,
+            // Advanced attribution metrics from backend
+            alpha: results.alpha || 0,
+            beta: results.beta || 0,
+            treynor_ratio: results.treynor_ratio || 0,
+            tracking_error: results.tracking_error || 0,
+            r_squared: results.r_squared || 0,
+            up_capture: results.up_capture || 0,
+            down_capture: results.down_capture || 0
           },
           advanced_metrics: {
             sortino_ratio: results.sortino_ratio,
             calmar_ratio: results.calmar_ratio,
             profit_factor: results.profit_factor
-          }
+          },
+          cumulative_returns,
+          daily_returns,
+          monthly_returns,
+          annual_returns,
+          average_annual_return,
+          drawdown,
+          underwater_curve,
+          rolling_volatility,
+          rolling_sharpe,
+          rolling_beta,
+          trade_return_histogram
         });
 
         // Convert chart data format

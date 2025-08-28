@@ -6,6 +6,7 @@ Handles strategy CRUD operations, compilation, and validation.
 import os
 import sys
 import time
+import logging
 from contextlib import asynccontextmanager
 from typing import List, Dict, Any, Optional
 from uuid import UUID
@@ -33,22 +34,33 @@ from shared.auth_dependency import get_current_user
 from shared.auth_client import close_auth_client
 
 from .config import settings
-from .services import DatabaseService, RedisService, StrategyTemplateService
+from .database_service import DatabaseService
+from .redis_service import RedisService
+from .services import StrategyTemplateService
 
-# Configure logging
+# Configure logging - ensure output goes to stdout/stderr
+logging.basicConfig(
+    level=logging.DEBUG,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    stream=sys.stdout
+)
+
 structlog.configure(
     processors=[
         structlog.processors.TimeStamper(fmt="iso"),
         structlog.processors.add_log_level,
         structlog.processors.JSONRenderer()
     ],
-    wrapper_class=structlog.make_filtering_bound_logger(30),
+    wrapper_class=structlog.make_filtering_bound_logger(10),  # DEBUG level to see all logs
     logger_factory=structlog.PrintLoggerFactory(),
     cache_logger_on_first_use=True,
 )
 
 logger = structlog.get_logger()
 
+# Global service instances
+database_service = DatabaseService()
+redis_service = RedisService()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -56,8 +68,8 @@ async def lifespan(app: FastAPI):
     logger.info("🚀 Starting Strategy Service")
     
     # Initialize services
-    await DatabaseService.initialize()
-    await RedisService.initialize()
+    await database_service.initialize(settings.DATABASE_URL)
+    await redis_service.initialize(settings.REDIS_URL)
     await StrategyTemplateService.initialize()
     
     logger.info("✅ Strategy Service initialized")
@@ -65,8 +77,8 @@ async def lifespan(app: FastAPI):
     yield
     
     logger.info("🛑 Shutting down Strategy Service")
-    await DatabaseService.close()
-    await RedisService.close()
+    await database_service.close()
+    await redis_service.close()
     await close_auth_client()
 
 
@@ -85,7 +97,7 @@ async def create_strategy(
     current_user: UserResponse = Depends(get_current_user)
 ):
     """Create a new strategy."""
-    logger.info("🆕 Creating new strategy", 
+    logger.warning("🆕 Creating new strategy", 
                user_id=str(current_user.id),
                user_email=current_user.email,
                user_username=current_user.username,
@@ -107,11 +119,11 @@ async def create_strategy(
     
     try:
         # Validate and compile strategy
-        logger.info("🔧 Starting strategy compilation")
+        logger.warning("🔧 Starting strategy compilation")
         compiler = StrategyCompiler()
         compilation_result = compiler.compile_strategy(strategy.json_tree)
         
-        logger.info("🔧 Compilation completed", 
+        logger.warning("🔧 Compilation completed", 
                    success=compilation_result.success,
                    error_count=len(compilation_result.errors) if compilation_result.errors else 0,
                    warning_count=len(compilation_result.warnings) if compilation_result.warnings else 0,
@@ -133,8 +145,8 @@ async def create_strategy(
             )
         
         # Save to database
-        logger.info("💾 Saving strategy to database")
-        db_strategy = await DatabaseService.create_strategy(
+        logger.warning("💾 Saving strategy to database")
+        db_strategy = await database_service.create_strategy(
             user_id=current_user.id,
             name=strategy.name,
             description=strategy.description,
@@ -145,17 +157,17 @@ async def create_strategy(
             is_template=strategy.is_template
         )
         
-        logger.info("💾 Strategy saved to database", 
+        logger.warning("💾 Strategy saved to database", 
                    strategy_id=str(db_strategy['id']) if db_strategy else "None")
         
         # Cache compiled strategy in Redis
-        logger.info("🔄 Caching compiled strategy in Redis")
-        await RedisService.cache_compiled_strategy(
+        logger.warning("🔄 Caching compiled strategy in Redis")
+        await redis_service.cache_compiled_strategy(
             str(db_strategy['id']),
             compilation_result.strategy_instance
         )
         
-        logger.info("✅ Strategy creation completed successfully",
+        logger.warning("✅ Strategy creation completed successfully",
             strategy_id=str(db_strategy['id']),
             user_id=str(current_user.id),
             name=strategy.name,
@@ -193,7 +205,7 @@ async def list_strategies(
 ):
     """List user's strategies."""
     try:
-        strategies = await DatabaseService.list_user_strategies(
+        strategies = await database_service.list_user_strategies(
             user_id=current_user.id,
             category=category,
             include_templates=include_templates,
@@ -256,7 +268,7 @@ async def search_strategies(
 ):
     """Search strategies by name or description."""
     try:
-        strategies, total = await DatabaseService.search_strategies(
+        strategies, total = await database_service.search_strategies(
             user_id=current_user.id,
             query=query,
             category=category,
@@ -290,7 +302,7 @@ async def get_strategy_stats(
 ):
     """Get strategy statistics for the user."""
     try:
-        stats = await DatabaseService.get_user_strategy_stats(current_user.id)
+        stats = await database_service.get_user_strategy_stats(current_user.id)
         return StandardResponse.success_response(
             data=stats,
             message="Strategy statistics retrieved successfully"
@@ -311,7 +323,7 @@ async def get_strategy(
 ):
     """Get a specific strategy."""
     try:
-        strategy = await DatabaseService.get_strategy_by_id(strategy_id, current_user.id)
+        strategy = await database_service.get_strategy_by_id(strategy_id, current_user.id)
         
         if not strategy:
             raise HTTPException(
@@ -346,7 +358,7 @@ async def get_compiled_strategy_binary(
     
     try:
         # Check if strategy exists and belongs to user
-        strategy = await DatabaseService.get_strategy_by_id(strategy_id, current_user.id)
+        strategy = await database_service.get_strategy_by_id(strategy_id, current_user.id)
         if not strategy:
             logger.error("❌ Strategy not found for compiled binary request", 
                         strategy_id=str(strategy_id),
@@ -358,7 +370,7 @@ async def get_compiled_strategy_binary(
         
         # Get compiled strategy from Redis cache
         logger.info("🔍 Retrieving compiled strategy from cache")
-        compiled_strategy = await RedisService.get_compiled_strategy(str(strategy_id))
+        compiled_strategy = await redis_service.get_compiled_strategy(str(strategy_id))
         
         if not compiled_strategy:
             logger.warning("❌ No compiled strategy found in cache", 
@@ -407,20 +419,38 @@ async def update_strategy(
     """Update an existing strategy."""
     try:
         # Get existing strategy
-        existing = await DatabaseService.get_strategy_by_id(strategy_id, current_user.id)
+        existing = await database_service.get_strategy_by_id(strategy_id, current_user.id)
         if not existing:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Strategy not found"
             )
         
-        # If strategy structure changed, recompile
+        # If strategy structure or node data changed, recompile
         compilation_result = None
+        needs_recompilation = False
+        
         if strategy_update.json_tree is not None:
+            # Check if json_tree actually changed (structure or node data)
+            existing_json_tree = existing.get('json_tree', {})
+            if strategy_update.json_tree != existing_json_tree:
+                needs_recompilation = True
+                logger.warning("🔄 Strategy structure or node data changed - triggering recompilation",
+                             strategy_id=str(strategy_id))
+            else:
+                logger.info("📋 Strategy json_tree provided but unchanged - skipping recompilation",
+                           strategy_id=str(strategy_id))
+        
+        if needs_recompilation:
+            logger.warning("🔧 Starting strategy recompilation", strategy_id=str(strategy_id))
             compiler = StrategyCompiler()
             compilation_result = compiler.compile_strategy(strategy_update.json_tree)
             
             if not compilation_result.success:
+                logger.error("❌ Strategy recompilation failed", 
+                            strategy_id=str(strategy_id),
+                            errors=compilation_result.errors,
+                            warnings=compilation_result.warnings)
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail={
@@ -428,21 +458,30 @@ async def update_strategy(
                         "compilation_errors": compilation_result.errors
                     }
                 )
+            
+            logger.warning("✅ Strategy recompilation successful", 
+                         strategy_id=str(strategy_id),
+                         warning_count=len(compilation_result.warnings) if compilation_result.warnings else 0)
         
         # Update in database
-        updated_strategy = await DatabaseService.update_strategy(
+        updated_strategy = await database_service.update_strategy(
             strategy_id=strategy_id,
             user_id=current_user.id,
             **strategy_update.model_dump(exclude_unset=True),
             compilation_report=compilation_result.to_dict() if compilation_result else None
         )
         
-        # Update Redis cache
+        # Update Redis cache if recompiled
         if compilation_result and compilation_result.strategy_instance:
-            await RedisService.cache_compiled_strategy(
+            logger.warning("🔄 Updating Redis cache with recompiled strategy", 
+                         strategy_id=str(strategy_id))
+            await redis_service.cache_compiled_strategy(
                 str(strategy_id),
                 compilation_result.strategy_instance
             )
+        elif needs_recompilation:
+            logger.warning("⚠️ Recompilation needed but no strategy instance generated", 
+                         strategy_id=str(strategy_id))
         
         logger.info("Strategy updated", strategy_id=str(strategy_id))
         
@@ -468,7 +507,7 @@ async def delete_strategy(
 ) -> Dict[str, Any]:
     """Delete a strategy."""
     try:
-        success = await DatabaseService.delete_strategy(strategy_id, current_user.id)
+        success = await database_service.delete_strategy(strategy_id, current_user.id)
         
         if not success:
             raise HTTPException(
@@ -477,7 +516,7 @@ async def delete_strategy(
             )
         
         # Remove from Redis cache
-        await RedisService.remove_compiled_strategy(str(strategy_id))
+        await redis_service.remove_compiled_strategy(str(strategy_id))
         
         logger.info("Strategy deleted", strategy_id=str(strategy_id))
         
@@ -509,7 +548,7 @@ async def compile_strategy(
     try:
         # Get strategy
         logger.info("📋 Fetching strategy from database", strategy_id=str(strategy_id))
-        strategy = await DatabaseService.get_strategy_by_id(strategy_id, current_user.id)
+        strategy = await database_service.get_strategy_by_id(strategy_id, current_user.id)
         if not strategy:
             logger.error("❌ Strategy not found", 
                         strategy_id=str(strategy_id),
@@ -552,12 +591,12 @@ async def compile_strategy(
         
         # Update compilation report in database
         logger.info("💾 Updating compilation report in database")
-        await DatabaseService.update_compilation_report(strategy_id, result.to_dict())
+        await database_service.update_compilation_report(strategy_id, result.to_dict())
         
         # Cache if successful
         if result.success and result.strategy_instance:
             logger.info("🔄 Caching compiled strategy")
-            await RedisService.cache_compiled_strategy(
+            await redis_service.cache_compiled_strategy(
                 str(strategy_id),
                 result.strategy_instance
             )
@@ -604,7 +643,7 @@ async def duplicate_strategy(
     """Duplicate an existing strategy."""
     try:
         # Get original strategy
-        original = await DatabaseService.get_strategy_by_id(strategy_id, current_user.id)
+        original = await database_service.get_strategy_by_id(strategy_id, current_user.id)
         if not original:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -617,7 +656,7 @@ async def duplicate_strategy(
         else:
             duplicate_name = f"{original.name} (Copy)"
         
-        duplicated = await DatabaseService.create_strategy(
+        duplicated = await database_service.create_strategy(
             user_id=current_user.id,
             name=duplicate_name,
             description=original.description,
@@ -682,7 +721,7 @@ async def create_from_template(
             )
         
         # Create strategy from template
-        created_strategy = await DatabaseService.create_strategy(
+        created_strategy = await database_service.create_strategy(
             user_id=current_user.id,
             name=strategy_name,
             description=f"Created from {template_name} template",
@@ -720,8 +759,8 @@ async def health_check():
         "status": "healthy",
         "timestamp": time.time(),
         "service": "strategy-service",
-        "database_connected": await DatabaseService.is_connected(),
-        "redis_connected": await RedisService.is_connected(),
+        "database_connected": await database_service.is_connected(),
+        "redis_connected": await redis_service.is_connected(),
         "available_nodes": len(get_available_nodes())
     }
 

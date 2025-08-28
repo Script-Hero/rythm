@@ -63,6 +63,30 @@ const tooltipFormatter = (params) => {
 
 export default function MainChart({ chartData, ranBacktest }) {
   const getOption = () => {
+    // Handle empty chart data with loading state
+    if (!chartData || chartData.length === 0) {
+      return {
+        backgroundColor: 'transparent',
+        title: {
+          text: 'Loading Chart Data...',
+          subtext: 'Processing backtest results and generating chart data',
+          left: 'center',
+          top: 'center',
+          textStyle: {
+            fontSize: 18,
+            color: '#6366f1',
+            fontWeight: 'bold'
+          },
+          subtextStyle: {
+            fontSize: 14,
+            color: '#94a3b8',
+            lineHeight: 22
+          }
+        },
+        series: []
+      };
+    }
+
     const dates = chartData.map((d) => d.Datetime);
     const ohlc = chartData.map((d) => [d.Open, d.Close, d.Low, d.High]);
     const portfolio = chartData.map((d) => d.PortfolioValue);

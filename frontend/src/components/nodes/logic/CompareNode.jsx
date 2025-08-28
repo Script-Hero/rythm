@@ -3,8 +3,7 @@ import { Handle, Position } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 
 function CompareNode({ data, id, updateNodeData }) {
-  const [operator, setOperator] = useState(data.operator || '>');
-  const [value, setValue] = useState(data.value || 0);
+  const [operator, setOperator] = useState(data.operator || 'greater_than');
 
   // Sync local state with prop data changes
   useEffect(() => {
@@ -13,20 +12,9 @@ function CompareNode({ data, id, updateNodeData }) {
     }
   }, [data.operator, operator]);
 
-  useEffect(() => {
-    if (data.value !== undefined && data.value !== value) {
-      setValue(data.value);
-    }
-  }, [data.value, value]);
-
   const handleOperatorChange = (newOperator) => {
     setOperator(newOperator);
     updateNodeData?.(id, { operator: newOperator });
-  };
-
-  const handleValueChange = (newValue) => {
-    setValue(newValue);
-    updateNodeData?.(id, { value: newValue });
   };
 
   return (
@@ -41,31 +29,26 @@ function CompareNode({ data, id, updateNodeData }) {
             onChange={(e) => handleOperatorChange(e.target.value)}
             className="w-full px-2 py-1 text-xs border rounded"
           >
-            <option value=">">Greater than</option>
-            <option value="<">Less than</option>
-            <option value=">=">Greater or equal</option>
-            <option value="<=">Less or equal</option>
-            <option value="==">Equal to</option>
-            <option value="!=">Not equal to</option>
+            <option value="greater_than">Greater than (&gt;)</option>
+            <option value="less_than">Less than (&lt;)</option>
+            <option value="greater_equal">Greater or equal (&ge;)</option>
+            <option value="less_equal">Less or equal (&le;)</option>
+            <option value="equal">Equal to (==)</option>
           </select>
-        </div>
-        
-        <div>
-          <label className="text-xs text-gray-600 block">Value</label>
-          <input
-            type="number"
-            value={value}
-            onChange={(e) => handleValueChange(parseFloat(e.target.value))}
-            className="w-full px-2 py-1 text-xs border rounded"
-            step="0.01"
-          />
         </div>
       </div>
       
       <Handle
         type="target"
         position={Position.Left}
-        id="value-in"
+        id="value1-in"
+        className="w-3 h-3 bg-green-500"
+      />
+      <Handle
+        type="target"
+        position={Position.Left}
+        id="value2-in"
+        style={{ top: 30 }}
         className="w-3 h-3 bg-green-500"
       />
       <Handle

@@ -478,6 +478,7 @@ class ApiService {
   async runBacktest(data: BacktestRequest): Promise<BacktestResponse> {
     console.log('📊 Frontend: Submitting backtest job', {
       strategy_id: data.strategy_id,
+      has_json_tree: Boolean((data as any).json_tree),
       symbol: data.ticker,
       dateRange: `${data.fromDate} to ${data.toDate}`,
       interval: data.interval
@@ -487,6 +488,7 @@ class ApiService {
       method: 'POST',
       body: JSON.stringify({
         strategy_id: data.strategy_id,
+        json_tree: (data as any).json_tree,
         symbol: data.ticker,
         start_date: data.fromDate,
         end_date: data.toDate,

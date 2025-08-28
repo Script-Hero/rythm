@@ -496,6 +496,13 @@ class CompiledStrategy:
                 
                 # Execute node
                 outputs = node.compute(**inputs)
+                
+                # Optional detailed per-node log (debug only)
+                if outputs:
+                    logger.debug(f"🔍 NODE {node_id} ({type(node).__name__})", 
+                                 inputs={k: str(v) for k, v in inputs.items()},
+                                 outputs={k: str(v) for k, v in outputs.items()} if outputs else {})
+                
                 logger.debug("📤 Node outputs", 
                            node_id=node_id, 
                            output_keys=list(outputs.keys()) if outputs else [],
@@ -557,7 +564,7 @@ class CompiledStrategy:
                                        input_key=input_key,
                                        value=str(source_outputs[source_handle]))
                         else:
-                            logger.warning("⚠️ Source handle not found in outputs",
+                            logger.debug("⚠️ Source handle not found in outputs",
                                          source_handle=source_handle,
                                          available_handles=list(source_outputs.keys()))
         
@@ -567,32 +574,30 @@ class CompiledStrategy:
         
         # Add market data for data nodes
         node = self.nodes[node_id]
-        node_type = getattr(node, 'node_type', type(node).__name__.replace('Node', 'Node').lower())
-        logger.info("📊 Checking if node needs market data", 
-                   node_id=node_id,
-                   node_type=node_type)
+        node_type = getattr(node, 'node_type', type(node).__name__.lower())
+        logger.debug("🔍 MARKET DATA CHECK", 
+                     node_id=node_id,
+                     node_type=node_type,
+                     node_class=type(node).__name__,
+                     node_type_check=node_type in ["pricenode", "volumenode", "priceNode", "volumeNode"],
+                     market_data_keys=list(market_data.keys()) if market_data else [])
         
-        if node_type in ["priceNode", "volumeNode"]:
-            logger.info("📊 Adding market data to data node", 
-                       node_id=node_id,
-                       node_type=node_type,
-                       market_data_keys=list(market_data.keys()))
-            
+        if node_type.lower() in ["pricenode", "volumenode"]:
             # Data nodes get market data directly
-            if node_type == "priceNode":
-                price_type = node.data.get("priceType", "close")
-                inputs["market_data"] = market_data
-                logger.info("💰 Price node configured", 
-                           price_type=price_type,
-                           market_data=market_data)
-            elif node_type == "volumeNode":
-                inputs["market_data"] = market_data
-                logger.info("📊 Volume node configured", market_data=market_data)
+            inputs["market_data"] = market_data
+            logger.debug("✅ MARKET DATA ADDED", 
+                         node_id=node_id,
+                         node_type=node_type)
+        else:
+            logger.debug("❌ NODE TYPE MISMATCH - NOT ADDING MARKET DATA",
+                         node_id=node_id,
+                         node_type=node_type,
+                         expected_types=["pricenode", "volumenode"])
         
-        logger.info("📥 Final inputs for node", 
-                   node_id=node_id,
-                   input_count=len(inputs),
-                   inputs={k: str(v) for k, v in inputs.items()})
+        logger.debug("📥 Final inputs for node", 
+                     node_id=node_id,
+                     input_count=len(inputs),
+                     inputs={k: str(v) for k, v in inputs.items()})
         
         return inputs
     

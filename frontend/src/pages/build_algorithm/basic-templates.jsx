@@ -11,10 +11,7 @@ export const BASIC_STRATEGY_TEMPLATES = {
         id: 'price-1',
         position: { x: 50, y: 200 },
         type: 'priceNode',
-        data: { 
-          priceType: 'close',
-          symbol: 'SPY'
-        },
+        data: { priceType: 'close' },
       },
       
       // RSI indicator
@@ -26,26 +23,37 @@ export const BASIC_STRATEGY_TEMPLATES = {
           period: 14
         },
       },
+      // Constants for RSI thresholds
+      {
+        id: 'const-30',
+        position: { x: 450, y: 80 },
+        type: 'constantNode',
+        data: { value: 30 },
+      },
+      {
+        id: 'const-70',
+        position: { x: 450, y: 320 },
+        type: 'constantNode',
+        data: { value: 70 },
+      },
       
-      // RSI oversold condition (< 30)
+      // RSI oversold condition (use engine operator keywords)
       {
         id: 'rsi-oversold',
         position: { x: 550, y: 100 },
         type: 'compareNode',
         data: { 
-          operator: '<',
-          value: 30
+          operator: 'less_than'
         },
       },
       
-      // RSI overbought condition (> 70)
+      // RSI overbought condition (use engine operator keywords)
       {
         id: 'rsi-overbought',
         position: { x: 550, y: 300 },
         type: 'compareNode',
         data: { 
-          operator: '>',
-          value: 70
+          operator: 'greater_than'
         },
       },
       
@@ -77,8 +85,11 @@ export const BASIC_STRATEGY_TEMPLATES = {
       { id: 'price-to-rsi', source: 'price-1', target: 'rsi-1', sourceHandle: 'price-out', targetHandle: 'price-in' },
       
       // RSI to comparators
-      { id: 'rsi-to-oversold', source: 'rsi-1', target: 'rsi-oversold', sourceHandle: 'rsi-out', targetHandle: 'value-in' },
-      { id: 'rsi-to-overbought', source: 'rsi-1', target: 'rsi-overbought', sourceHandle: 'rsi-out', targetHandle: 'value-in' },
+      { id: 'rsi-to-oversold', source: 'rsi-1', target: 'rsi-oversold', sourceHandle: 'rsi-out', targetHandle: 'value1-in' },
+      { id: 'rsi-to-overbought', source: 'rsi-1', target: 'rsi-overbought', sourceHandle: 'rsi-out', targetHandle: 'value1-in' },
+      // Constants to comparators
+      { id: 'const30-to-oversold', source: 'const-30', target: 'rsi-oversold', sourceHandle: 'value-out', targetHandle: 'value2-in' },
+      { id: 'const70-to-overbought', source: 'const-70', target: 'rsi-overbought', sourceHandle: 'value-out', targetHandle: 'value2-in' },
       
       // Conditions to orders
       { id: 'oversold-to-buy', source: 'rsi-oversold', target: 'buy-order', sourceHandle: 'result-out', targetHandle: 'trigger-in' },
@@ -95,10 +106,7 @@ export const BASIC_STRATEGY_TEMPLATES = {
         id: 'price-1',
         position: { x: 50, y: 200 },
         type: 'priceNode',
-        data: { 
-          priceType: 'close',
-          symbol: 'SPY'
-        },
+        data: { priceType: 'close' },
       },
       
       // SMA indicator
@@ -179,10 +187,7 @@ export const BASIC_STRATEGY_TEMPLATES = {
         id: 'price-1',
         position: { x: 50, y: 200 },
         type: 'priceNode',
-        data: { 
-          priceType: 'close',
-          symbol: 'SPY'
-        },
+        data: { priceType: 'close' },
       },
       
       // EMA indicator
@@ -263,10 +268,7 @@ export const BASIC_STRATEGY_TEMPLATES = {
         id: 'price-1',
         position: { x: 50, y: 200 },
         type: 'priceNode',
-        data: { 
-          priceType: 'close',
-          symbol: 'SPY'
-        },
+        data: { priceType: 'close' },
       },
       
       // MACD indicator
@@ -362,7 +364,7 @@ export const BASIC_STRATEGY_TEMPLATES = {
         type: 'bollingerBandsNode',
         data: { 
           period: 20,
-          stdDev: 2
+          deviation: 2
         },
       },
       
@@ -372,8 +374,7 @@ export const BASIC_STRATEGY_TEMPLATES = {
         position: { x: 550, y: 100 },
         type: 'compareNode',
         data: { 
-          operator: '<=',
-          value: 0
+          operator: 'less_equal'
         },
       },
       
@@ -383,8 +384,7 @@ export const BASIC_STRATEGY_TEMPLATES = {
         position: { x: 550, y: 300 },
         type: 'compareNode',
         data: { 
-          operator: '>=',
-          value: 0
+          operator: 'greater_equal'
         },
       },
       
@@ -416,10 +416,10 @@ export const BASIC_STRATEGY_TEMPLATES = {
       { id: 'price-to-bb', source: 'price-1', target: 'bb-1', sourceHandle: 'price-out', targetHandle: 'price-in' },
       
       // Price and Bollinger Bands to comparators
-      { id: 'price-to-lower-compare', source: 'price-1', target: 'price-at-lower', sourceHandle: 'price-out', targetHandle: 'value-in' },
-      { id: 'bb-lower-to-compare', source: 'bb-1', target: 'price-at-lower', sourceHandle: 'lower-out', targetHandle: 'compare-in' },
-      { id: 'price-to-upper-compare', source: 'price-1', target: 'price-at-upper', sourceHandle: 'price-out', targetHandle: 'value-in' },
-      { id: 'bb-upper-to-compare', source: 'bb-1', target: 'price-at-upper', sourceHandle: 'upper-out', targetHandle: 'compare-in' },
+      { id: 'price-to-lower-compare', source: 'price-1', target: 'price-at-lower', sourceHandle: 'price-out', targetHandle: 'value1-in' },
+      { id: 'bb-lower-to-compare', source: 'bb-1', target: 'price-at-lower', sourceHandle: 'lower-out', targetHandle: 'value2-in' },
+      { id: 'price-to-upper-compare', source: 'price-1', target: 'price-at-upper', sourceHandle: 'price-out', targetHandle: 'value1-in' },
+      { id: 'bb-upper-to-compare', source: 'bb-1', target: 'price-at-upper', sourceHandle: 'upper-out', targetHandle: 'value2-in' },
       
       // Conditions to orders
       { id: 'at-lower-to-buy', source: 'price-at-lower', target: 'buy-order', sourceHandle: 'result-out', targetHandle: 'trigger-in' },

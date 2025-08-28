@@ -20,7 +20,9 @@ class BacktestStatus(str, Enum):
 
 class BacktestRequest(BaseModel):
     """Backtest request model."""
-    strategy_id: UUID = Field(..., description="ID of the strategy to backtest")
+    strategy_id: Optional[UUID] = Field(default=None, description="ID of the strategy to backtest")
+    # Optional: allow passing a raw json_tree for template-based or ad-hoc strategies
+    json_tree: Optional[Dict[str, Any]] = Field(default=None, description="Strategy graph (nodes, edges)")
     symbol: str = Field(..., description="Trading symbol (e.g., BTC/USD)")
     start_date: datetime = Field(..., description="Backtest start date")
     end_date: datetime = Field(..., description="Backtest end date")
@@ -75,7 +77,23 @@ class BacktestResults(BaseModel):
     sharpe_ratio: Optional[float] = None
     sortino_ratio: Optional[float] = None
     calmar_ratio: Optional[float] = None
+    sterling_ratio: Optional[float] = None
+    ulcer_index: Optional[float] = None
+    information_ratio: Optional[float] = None
     volatility: Optional[float] = None
+    
+    # Additional metrics for frontend compatibility
+    cagr: Optional[float] = None
+    avg_win: Optional[float] = None
+    avg_loss: Optional[float] = None
+    win_loss_ratio: Optional[float] = None
+    expectancy: Optional[float] = None
+    kelly_criterion: Optional[float] = None
+    turnover_ratio: Optional[float] = None
+    trades_per_day: Optional[float] = None
+    capacity: Optional[float] = None
+    runtime_days: Optional[float] = None
+    runtime_years: Optional[float] = None
     
     # Profit/Loss metrics
     gross_profit: Decimal
@@ -95,10 +113,32 @@ class BacktestResults(BaseModel):
     
     # Trade history
     trades: List[TradeResult] = Field(default_factory=list)
-    
+
     # Metadata
     execution_time_ms: int
     total_periods: int
+
+    # Analytics timeseries for frontend charts (optional)
+    cumulative_returns: Optional[Dict[str, Any]] = None
+    daily_returns: Optional[Dict[str, Any]] = None
+    monthly_returns: Optional[Dict[str, Any]] = None
+    annual_returns: Optional[Dict[str, Any]] = None
+    average_annual_return: Optional[float] = None
+    drawdown: Optional[Dict[str, Any]] = None
+    underwater_curve: Optional[Dict[str, Any]] = None
+    rolling_volatility: Optional[Dict[str, Any]] = None
+    rolling_sharpe: Optional[Dict[str, Any]] = None
+    rolling_beta: Optional[Dict[str, Any]] = None
+    trade_return_histogram: Optional[Dict[str, Any]] = None
+
+    # Attribution metrics
+    alpha: Optional[float] = None
+    beta: Optional[float] = None
+    r_squared: Optional[float] = None
+    tracking_error: Optional[float] = None
+    treynor_ratio: Optional[float] = None
+    up_capture: Optional[float] = None
+    down_capture: Optional[float] = None
     
     class Config:
         json_encoders = {
