@@ -8,7 +8,7 @@ import React from "react";
  * (see backtest_metrics.py). Any metric that is `-1`, `null`, or
  * `undefined` is rendered as an em-dash (—).
  */
-export default function KeyStatistics({ data = {} }) {
+export default function KeyStatistics({ data = {}, ovrPercent }) {
   const isMissing = (v) => v == null || v === -1;
 
   const metrics = [
@@ -131,6 +131,29 @@ export default function KeyStatistics({ data = {} }) {
             <p className="text-xs text-center text-blue-100 mt-1">Strategy key performance indicators</p>
           </div>
         </div>
+
+        {/* Overall Win Rate - Prominent at top */}
+        {ovrPercent !== undefined && (
+          <div className="p-4 bg-gradient-to-r from-indigo-600 via-purple-600 to-pink-600 text-white border-b-2 border-indigo-200">
+            <div className="text-center">
+              <div className="text-xs font-medium uppercase tracking-wider text-indigo-100 mb-1">Overall Strategy Performance</div>
+              <div className="flex items-center justify-center gap-3">
+                <div className="text-4xl font-bold text-white drop-shadow-lg">
+                  {ovrPercent}%
+                </div>
+                <div className="text-sm font-medium text-indigo-100">
+                  Win Rate
+                </div>
+              </div>
+              <div className="w-full bg-white/20 rounded-full h-2 mt-2">
+                <div 
+                  className="bg-white h-2 rounded-full transition-all duration-1000 ease-out" 
+                  style={{ width: `${ovrPercent}%` }}
+                ></div>
+              </div>
+            </div>
+          </div>
+        )}
 
         <div className="p-3 space-y-2 max-h-[calc(100%-80px)] overflow-y-auto">
           {metrics.map(({ key, label, format }) => {
