@@ -122,7 +122,23 @@ class SessionEventPublisher:
             
             # Add to session event stream for historical access
             stream_key = f"session_events:{session_id}"
-            await self.redis_client.xadd(stream_key, asdict(event))
+            event_data = asdict(event)
+            # Convert UUID objects to strings for JSON serialization
+            if 'session_id' in event_data:
+                event_data['session_id'] = str(event_data['session_id'])
+            if 'user_id' in event_data:
+                event_data['user_id'] = str(event_data['user_id'])
+            # Convert nested dict to JSON string for Redis
+            if 'data' in event_data and isinstance(event_data['data'], dict):
+                event_data['data'] = json.dumps(event_data['data'], default=str)
+            # Convert all other values to strings for Redis
+            redis_event_data = {}
+            for key, value in event_data.items():
+                if isinstance(value, (dict, list)):
+                    redis_event_data[key] = json.dumps(value, default=str)
+                else:
+                    redis_event_data[key] = str(value)
+            await self.redis_client.xadd(stream_key, redis_event_data)
             
             # Trim stream to keep only recent events
             await self.redis_client.xtrim(stream_key, maxlen=1000, approximate=True)

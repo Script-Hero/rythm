@@ -35,6 +35,7 @@ class SessionState(str, Enum):
     CREATED = "CREATED"
     INITIALIZING = "INITIALIZING"
     READY = "READY"
+    PENDING = "PENDING"
     RUNNING = "RUNNING"
     PAUSED = "PAUSED"
     STOPPING = "STOPPING"
@@ -66,13 +67,14 @@ class SessionStateManager:
     
     # Valid state transitions
     VALID_TRANSITIONS = {
-        SessionState.CREATED: [SessionState.INITIALIZING, SessionState.ERROR],
+        SessionState.CREATED: [SessionState.INITIALIZING, SessionState.PENDING, SessionState.ERROR],
         SessionState.INITIALIZING: [SessionState.READY, SessionState.ERROR],
         SessionState.READY: [SessionState.RUNNING, SessionState.STOPPED, SessionState.ERROR],
+        SessionState.PENDING: [SessionState.RUNNING, SessionState.STOPPED, SessionState.ERROR],
         SessionState.RUNNING: [SessionState.PAUSED, SessionState.STOPPING, SessionState.ERROR],
         SessionState.PAUSED: [SessionState.RUNNING, SessionState.STOPPING, SessionState.ERROR],
         SessionState.STOPPING: [SessionState.STOPPED, SessionState.ERROR],
-        SessionState.STOPPED: [SessionState.READY, SessionState.COMPLETED],
+        SessionState.STOPPED: [SessionState.READY, SessionState.RUNNING, SessionState.COMPLETED],
         SessionState.ERROR: [SessionState.READY, SessionState.STOPPED],
         SessionState.COMPLETED: []  # Terminal state
     }
@@ -201,10 +203,31 @@ class SessionStateManager:
             await self._handle_session_error(session_id, error_msg)
             return False, error_msg
     
-    async def start_session(self, session_id: UUID) -> Tuple[bool, Optional[str]]:
+    async def start_session(self, session_id: UUID, user_id: Optional[UUID] = None) -> Tuple[bool, Optional[str]]:
         """Start a session (transition to RUNNING state)."""
+        
+        # If session not in active_sessions, try to restore it from database
         if session_id not in self.active_sessions:
-            return False, "Session not found"
+            logger.info("Session not in active sessions, attempting to restore", session_id=session_id)
+            
+            if not user_id:
+                return False, "Cannot restore session: user_id required"
+            
+            # Get session from database using the UUID and user_id
+            db_session = await DatabaseService.get_session(session_id, user_id)
+            
+            if not db_session:
+                return False, "Session not found in database"
+            
+            # Restore session to active_sessions
+            self.state_locks[session_id] = asyncio.Lock()
+            runtime_data = SessionRuntimeData(
+                session_id=session_id,
+                user_id=db_session.user_id,
+                cash_balance=db_session.current_balance
+            )
+            self.active_sessions[session_id] = runtime_data
+            logger.info("Session restored to active sessions", session_id=session_id)
         
         async with self.state_locks[session_id]:
             try:
@@ -222,7 +245,7 @@ class SessionStateManager:
                 await self._handle_session_error(session_id, error_msg)
                 return False, error_msg
     
-    async def pause_session(self, session_id: UUID) -> Tuple[bool, Optional[str]]:
+    async def pause_session(self, session_id: UUID, user_id: Optional[UUID] = None) -> Tuple[bool, Optional[str]]:
         """Pause a running session."""
         if session_id not in self.active_sessions:
             return False, "Session not found"

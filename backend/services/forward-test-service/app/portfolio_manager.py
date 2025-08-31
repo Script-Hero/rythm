@@ -7,6 +7,7 @@ Enhanced from Beta1's portfolio management functionality.
 import asyncio
 import json
 import time
+import decimal
 from datetime import datetime, timedelta
 from decimal import Decimal, getcontext
 from typing import Dict, List, Optional, Any, Tuple
@@ -186,28 +187,60 @@ class PortfolioManager:
     ) -> Optional[Trade]:
         """Process a trading signal from strategy execution."""
         try:
-            if session_id not in self.portfolios:
-                logger.warning("Portfolio not found for signal", session_id=session_id)
+            # Validate signal structure
+            validated_signal = await self._validate_signal(signal, session_id)
+            if not validated_signal:
                 return None
             
-            action = signal.get('action', 'HOLD')
+            if session_id not in self.portfolios:
+                logger.warning("Portfolio not found for signal, attempting to restore", 
+                             session_id=session_id)
+                # Try to restore from Redis
+                restored = await self._restore_portfolio_from_redis(session_id)
+                if not restored:
+                    logger.error("Failed to restore portfolio for signal processing", 
+                               session_id=session_id)
+                    return None
+            
+            action = validated_signal['action']
             if action == 'HOLD':
                 return None
             
-            symbol = market_data.get('symbol', '')
-            current_price = Decimal(str(market_data.get('price', 0)))
+            # Get symbol and price from validated signal (enriched by strategy executor)
+            symbol = validated_signal.get('symbol', market_data.get('symbol', ''))
+            current_price_raw = validated_signal.get('current_price', market_data.get('price', 0))
             
-            if current_price <= 0:
-                logger.warning("Invalid price for trade", symbol=symbol, price=current_price)
+            # Validate and convert current price
+            try:
+                current_price = Decimal(str(current_price_raw))
+                if current_price <= 0:
+                    logger.warning("Invalid price for trade", 
+                                 session_id=session_id,
+                                 symbol=symbol, 
+                                 price=current_price_raw)
+                    return None
+            except (ValueError, TypeError, decimal.InvalidOperation) as e:
+                logger.warning("Failed to convert price to Decimal", 
+                             session_id=session_id,
+                             symbol=symbol,
+                             price=current_price_raw,
+                             error=str(e))
                 return None
             
-            # Determine trade quantity based on signal
+            if not symbol:
+                logger.warning("No symbol found for trade", session_id=session_id, signal=validated_signal)
+                return None
+            
+            # Determine trade quantity based on validated signal
             quantity = await self._calculate_trade_quantity(
-                session_id, action, signal, current_price
+                session_id, action, validated_signal, current_price
             )
             
             if quantity <= 0:
-                logger.debug("No quantity to trade", session_id=session_id, action=action)
+                logger.debug("No quantity to trade", 
+                           session_id=session_id, 
+                           action=action,
+                           calculated_quantity=quantity)
                 return None
             
             # Execute the trade
@@ -230,7 +263,9 @@ class PortfolioManager:
             
         except Exception as e:
             logger.error("Failed to process strategy signal", 
-                        session_id=session_id, error=str(e))
+                        session_id=session_id, 
+                        signal=signal,
+                        error=str(e))
             return None
     
     async def update_portfolio_valuation(
@@ -326,6 +361,44 @@ class PortfolioManager:
                         session_id=session_id, error=str(e))
             return []
     
+    async def _validate_signal(self, signal: Dict[str, Any], session_id: UUID) -> Optional[Dict[str, Any]]:
+        """Validate and normalize signal structure."""
+        try:
+            if not signal:
+                logger.warning("Empty signal received", session_id=session_id)
+                return None
+            
+            # Validate required action field
+            action = signal.get('action')
+            if not action or action not in ['BUY', 'SELL', 'HOLD']:
+                logger.warning("Invalid or missing action in signal", 
+                             session_id=session_id, 
+                             action=action,
+                             signal=signal)
+                return None
+            
+            validated_signal = {'action': action}
+            
+            # Copy other valid fields
+            for field in ['symbol', 'current_price', 'position_size', 'quantity', 'sell_percent', 
+                          'order_type', 'timestamp', 'original_quantity']:
+                if field in signal:
+                    validated_signal[field] = signal[field]
+            
+            logger.debug("Signal validation successful", 
+                       session_id=session_id,
+                       original_signal=signal,
+                       validated_signal=validated_signal)
+            
+            return validated_signal
+            
+        except Exception as e:
+            logger.error("Signal validation failed", 
+                        session_id=session_id, 
+                        signal=signal,
+                        error=str(e))
+            return None
+    
     async def _calculate_trade_quantity(
         self,
         session_id: UUID,
@@ -335,34 +408,147 @@ class PortfolioManager:
     ) -> Decimal:
         """Calculate trade quantity based on signal and risk management."""
         try:
+            # Check if portfolio exists for this session
+            if session_id not in self.portfolios:
+                logger.warning("Portfolio not found for session, attempting to restore", 
+                             session_id=session_id)
+                # Try to restore from Redis or create if needed
+                restored = await self._restore_portfolio_from_redis(session_id)
+                if not restored:
+                    logger.error("Failed to restore portfolio for session", 
+                               session_id=session_id)
+                    return Decimal('0')
+            
             portfolio = self.portfolios[session_id]
             
-            # Get position sizing from signal (default to percentage of portfolio)
-            position_size_percent = signal.get('position_size', 0.1)  # 10% default
+            # Validate current_price
+            if current_price is None or current_price <= 0:
+                logger.warning("Invalid current price for trade calculation", 
+                             session_id=session_id, price=current_price)
+                return Decimal('0')
+            
+            # Get position sizing from signal - handle both position_size and quantity formats
+            position_size_decimal = None
+            
+            # First try position_size (from enriched signals)
+            if 'position_size' in signal:
+                try:
+                    position_size_percent = signal['position_size']
+                    position_size_decimal = Decimal(str(position_size_percent))
+                    if position_size_decimal <= 0 or position_size_decimal > 1:
+                        logger.warning("Invalid position size percent in signal, using default", 
+                                     session_id=session_id, 
+                                     position_size=position_size_percent)
+                        position_size_decimal = Decimal('0.1')  # 10% default
+                    else:
+                        logger.debug("Using position_size from signal", 
+                                   session_id=session_id,
+                                   position_size=float(position_size_decimal))
+                except (ValueError, TypeError, decimal.InvalidOperation) as e:
+                    logger.warning("Invalid position size format in signal, using default", 
+                                 session_id=session_id, 
+                                 position_size=signal.get('position_size'),
+                                 error=str(e))
+                    position_size_decimal = Decimal('0.1')
+            
+            # Fallback to quantity-based calculation (from legacy signals)
+            elif 'quantity' in signal:
+                try:
+                    quantity_raw = signal['quantity']
+                    quantity_float = float(quantity_raw)
+                    if quantity_float <= 0:
+                        logger.warning("Invalid quantity in signal, using default position size", 
+                                     session_id=session_id, quantity=quantity_raw)
+                        position_size_decimal = Decimal('0.1')
+                    else:
+                        # Convert quantity to position size percentage (quantity as percentage of portfolio)
+                        position_size_decimal = Decimal(str(min(quantity_float / 100.0, 1.0)))
+                        logger.debug("Converted quantity to position_size", 
+                                   session_id=session_id,
+                                   original_quantity=quantity_float,
+                                   position_size=float(position_size_decimal))
+                except (ValueError, TypeError, decimal.InvalidOperation) as e:
+                    logger.warning("Failed to convert quantity to position size, using default", 
+                                 session_id=session_id, 
+                                 quantity=signal.get('quantity'),
+                                 error=str(e))
+                    position_size_decimal = Decimal('0.1')
+            
+            # Final fallback - use default
+            if position_size_decimal is None:
+                logger.debug("No position_size or quantity found in signal, using default", 
+                           session_id=session_id)
+                position_size_decimal = Decimal('0.1')  # 10% default
             
             if action == 'BUY':
                 # Calculate max quantity based on available cash
                 available_cash = portfolio.cash_balance
-                max_trade_value = available_cash * Decimal(str(position_size_percent))
+                if available_cash <= 0:
+                    logger.debug("No available cash for buy order", 
+                               session_id=session_id, cash=available_cash)
+                    return Decimal('0')
+                
+                max_trade_value = available_cash * position_size_decimal
                 
                 # Account for fees
                 fee_rate = self.default_fee_rate
-                max_quantity = max_trade_value / (current_price * (1 + fee_rate))
+                denominator = current_price * (Decimal('1') + fee_rate)
+                
+                if denominator <= 0:
+                    logger.warning("Invalid denominator for quantity calculation", 
+                                 session_id=session_id, price=current_price, fee_rate=fee_rate)
+                    return Decimal('0')
+                
+                max_quantity = max_trade_value / denominator
                 
                 return max(Decimal('0'), max_quantity.quantize(Decimal('0.00000001')))
             
             elif action == 'SELL':
-                # Get current position
+                # Get symbol from signal (should be set by signal enrichment)
                 symbol = signal.get('symbol', '')
+                
+                if not symbol:
+                    logger.warning("No symbol found for sell order", 
+                                 session_id=session_id, signal=signal)
+                    return Decimal('0')
+                
                 if symbol in portfolio.positions:
                     current_quantity = portfolio.positions[symbol].quantity
                     
+                    if current_quantity <= 0:
+                        logger.debug("No position to sell", 
+                                   session_id=session_id, symbol=symbol)
+                        return Decimal('0')
+                    
                     # Sell percentage or all
                     sell_percent = signal.get('sell_percent', 1.0)  # 100% default
-                    sell_quantity = current_quantity * Decimal(str(sell_percent))
+                    try:
+                        sell_percent_decimal = Decimal(str(sell_percent))
+                        if sell_percent_decimal <= 0 or sell_percent_decimal > 1:
+                            logger.warning("Invalid sell percent, using 100%", 
+                                         session_id=session_id, 
+                                         sell_percent=sell_percent)
+                            sell_percent_decimal = Decimal('1.0')
+                    except (ValueError, TypeError, decimal.InvalidOperation) as e:
+                        logger.warning("Invalid sell percent format, using 100%", 
+                                     session_id=session_id, 
+                                     sell_percent=sell_percent,
+                                     error=str(e))
+                        sell_percent_decimal = Decimal('1.0')
+                    
+                    sell_quantity = current_quantity * sell_percent_decimal
+                    
+                    logger.debug("Calculated sell quantity", 
+                               session_id=session_id,
+                               symbol=symbol,
+                               current_quantity=float(current_quantity),
+                               sell_percent=float(sell_percent_decimal),
+                               sell_quantity=float(sell_quantity))
                     
                     return max(Decimal('0'), sell_quantity.quantize(Decimal('0.00000001')))
                 else:
+                    logger.debug("No position found for sell order", 
+                               session_id=session_id, symbol=symbol)
                     return Decimal('0')
             
             return Decimal('0')
@@ -589,9 +775,11 @@ class PortfolioManager:
             portfolio_key = f"portfolio:{session_id}"
             portfolio_data = asdict(portfolio)
             
-            # Convert Decimal objects to strings for JSON serialization
+            # Convert Decimal and UUID objects to strings for JSON serialization
             def decimal_to_str(obj):
                 if isinstance(obj, Decimal):
+                    return str(obj)
+                elif isinstance(obj, UUID):
                     return str(obj)
                 elif isinstance(obj, dict):
                     return {k: decimal_to_str(v) for k, v in obj.items()}
@@ -625,6 +813,8 @@ class PortfolioManager:
                         for k, v in obj.items():
                             if k in ['cash_balance', 'total_value', 'total_pnl', 'total_pnl_percent', 'initial_capital']:
                                 result[k] = Decimal(str(v))
+                            elif k in ['session_id', 'user_id']:
+                                result[k] = UUID(str(v))
                             elif k == 'positions':
                                 positions = {}
                                 for symbol, pos_data in v.items():

@@ -715,21 +715,37 @@ class BuyNode(Node):
                    node_data=self.data)
         
         if trigger_in:
-            quantity = self.data.get("quantity", 100)
-            order_type = self.data.get("orderType", "market")
-            
-            signal = {
-                "action": "BUY",
-                "quantity": quantity,
-                "order_type": order_type
-            }
-            
-            logger.debug("🎯 BuyNode generating BUY signal", 
-                       node_id=self.id,
-                       signal=signal,
-                       trigger_value=trigger_in)
-            
-            return {"signal-out": signal}
+            # Ensure quantity is properly typed and validated
+            try:
+                quantity_raw = self.data.get("quantity", 100)
+                quantity = float(quantity_raw)
+                if quantity <= 0:
+                    logger.warning("Invalid quantity in BuyNode, using default", 
+                                 node_id=self.id, quantity=quantity_raw)
+                    quantity = 100.0
+                    
+                order_type = str(self.data.get("orderType", "market"))
+                
+                signal = {
+                    "action": "BUY",
+                    "quantity": quantity,
+                    "order_type": order_type
+                }
+                
+                logger.debug("🎯 BuyNode generating BUY signal", 
+                           node_id=self.id,
+                           signal=signal,
+                           trigger_value=trigger_in,
+                           quantity_type=type(quantity).__name__)
+                
+                return {"signal-out": signal}
+                
+            except (ValueError, TypeError) as e:
+                logger.error("BuyNode failed to generate signal", 
+                           node_id=self.id,
+                           quantity_raw=self.data.get("quantity"),
+                           error=str(e))
+                return {"signal-out": None}
         
         logger.debug("⏸️ BuyNode not triggered", 
                    node_id=self.id,
@@ -750,21 +766,49 @@ class SellNode(Node):
                    node_data=self.data)
         
         if trigger_in:
-            quantity = self.data.get("quantity", 100)
-            order_type = self.data.get("orderType", "market")
-            
-            signal = {
-                "action": "SELL", 
-                "quantity": quantity,
-                "order_type": order_type
-            }
-            
-            logger.debug("🎯 SellNode generating SELL signal", 
-                       node_id=self.id,
-                       signal=signal,
-                       trigger_value=trigger_in)
-            
-            return {"signal-out": signal}
+            # Ensure quantity is properly typed and validated
+            try:
+                quantity_raw = self.data.get("quantity", 100)
+                quantity = float(quantity_raw)
+                if quantity <= 0:
+                    logger.warning("Invalid quantity in SellNode, using default", 
+                                 node_id=self.id, quantity=quantity_raw)
+                    quantity = 100.0
+                    
+                order_type = str(self.data.get("orderType", "market"))
+                
+                # Get sell percentage if specified
+                sell_percent = self.data.get("sellPercent", 100.0)  # Default to 100% of position
+                try:
+                    sell_percent = float(sell_percent) / 100.0  # Convert to decimal
+                    if sell_percent <= 0 or sell_percent > 1:
+                        logger.warning("Invalid sell percent in SellNode, using 100%", 
+                                     node_id=self.id, sell_percent=sell_percent)
+                        sell_percent = 1.0
+                except (ValueError, TypeError):
+                    sell_percent = 1.0
+                
+                signal = {
+                    "action": "SELL", 
+                    "quantity": quantity,
+                    "order_type": order_type,
+                    "sell_percent": sell_percent
+                }
+                
+                logger.debug("🎯 SellNode generating SELL signal", 
+                           node_id=self.id,
+                           signal=signal,
+                           trigger_value=trigger_in,
+                           quantity_type=type(quantity).__name__)
+                
+                return {"signal-out": signal}
+                
+            except (ValueError, TypeError) as e:
+                logger.error("SellNode failed to generate signal", 
+                           node_id=self.id,
+                           quantity_raw=self.data.get("quantity"),
+                           error=str(e))
+                return {"signal-out": None}
         
         logger.debug("⏸️ SellNode not triggered", 
                    node_id=self.id,

@@ -29,6 +29,7 @@ sys.path.append(os.path.join(os.path.dirname(__file__), '../../..'))
 from shared.models.forward_test_models import SessionStatus
 from shared.strategy_engine.compiler import CompiledStrategy
 from shared.kafka_client import KafkaProducer, Topics
+from shared.utils.signal_validation import SignalValidator
 
 logger = structlog.get_logger()
 
@@ -284,13 +285,22 @@ class StrategyExecutionService:
         if not signal or signal.get('action') == 'HOLD':
             return
         
-        logger.info("Processing strategy signal", 
-                   session_id=session_id, signal=signal)
+        # Enrich signal with market context and validate
+        enriched_signal = await self._enrich_and_validate_signal(signal, context, market_data)
+        if not enriched_signal:
+            logger.warning("Signal validation failed, skipping", 
+                          session_id=session_id, original_signal=signal)
+            return
+        
+        logger.info("Processing enriched strategy signal", 
+                   session_id=session_id, 
+                   original_signal=signal,
+                   enriched_signal=enriched_signal)
         
         # Execute trade through portfolio manager
         trade = await portfolio_manager.process_strategy_signal(
             session_id=session_id,
-            signal=signal,
+            signal=enriched_signal,
             market_data=market_data
         )
         
@@ -331,6 +341,60 @@ class StrategyExecutionService:
             price=float(market_data.get('price', 0)),
             volume=float(market_data.get('volume', 0))
         )
+    
+    async def _enrich_and_validate_signal(
+        self, 
+        signal: Dict[str, Any], 
+        context: StrategyExecutionContext, 
+        market_data: Dict[str, Any]
+    ) -> Optional[Dict[str, Any]]:
+        """Enrich signal with market context and validate all fields using shared validator."""
+        try:
+            # Add market context to signal
+            enriched_signal = dict(signal)
+            enriched_signal.update({
+                'symbol': context.symbol,
+                'current_price': market_data.get('price', 0),
+                'timestamp': market_data.get('timestamp', time.time())
+            })
+            
+            # Use shared validator for comprehensive validation and normalization
+            validation_context = {
+                'session_id': str(context.session_id),
+                'symbol': context.symbol
+            }
+            
+            validated_signal = SignalValidator.validate_and_normalize_signal(
+                enriched_signal, validation_context
+            )
+            
+            if not validated_signal:
+                logger.warning("Signal validation failed", 
+                             session_id=context.session_id,
+                             original_signal=signal)
+                return None
+            
+            # Validate current price specifically for trading
+            current_price = validated_signal.get('current_price', 0)
+            if not current_price or current_price <= 0:
+                logger.warning("Invalid current price for signal", 
+                             session_id=context.session_id, 
+                             price=current_price)
+                return None
+            
+            logger.debug("Signal validation and enrichment completed", 
+                       session_id=context.session_id,
+                       original_signal=signal,
+                       validated_signal=validated_signal)
+            
+            return validated_signal
+            
+        except Exception as e:
+            logger.error("Signal enrichment failed", 
+                        session_id=context.session_id, 
+                        signal=signal,
+                        error=str(e))
+            return None
     
     async def _get_latest_market_data(self, symbol: str) -> Optional[Dict[str, Any]]:
         """Get latest market data from Redis sliding window."""

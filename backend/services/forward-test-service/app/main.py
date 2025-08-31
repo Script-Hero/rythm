@@ -55,9 +55,13 @@ session_manager = SessionStateManager()
 
 
 # Helper functions for data retrieval
-async def get_portfolio_data(session_id: UUID) -> dict:
+async def get_portfolio_data(session_id: str, current_user: User) -> dict:
     """Get portfolio data for session detail response."""
     try:
+        session = await DatabaseService.get_session_by_session_id(session_id, UUID(current_user.id))
+        if not session:
+            return {}
+        
         portfolio = PortfolioSummary(
             session_id=session.id,
             cash_balance=100000,
@@ -73,21 +77,24 @@ async def get_portfolio_data(session_id: UUID) -> dict:
         return {}
 
 
-async def get_metrics_data(session_id: UUID) -> dict:
+async def get_metrics_data(session_id: str, current_user: User) -> dict:
     """Get metrics data for session detail response."""
     try:
         session = await DatabaseService.get_session_by_session_id(session_id, UUID(current_user.id))
         if not session:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+            return {}
         metrics = await session_manager.get_session_metrics(session.id)
         return metrics or {}
     except Exception:
         return {}
 
 
-async def get_trades_data(session_id: UUID) -> list:
+async def get_trades_data(session_id: str, current_user: User) -> list:
     """Get trades data for session detail response."""
     try:
+        session = await DatabaseService.get_session_by_session_id(session_id, UUID(current_user.id))
+        if not session:
+            return []
         # TODO: Implement actual trade retrieval
         return []
     except Exception:
@@ -232,7 +239,7 @@ async def get_session(
 ):
     """Get a specific forward testing session."""
     try:
-        session = await DatabaseService.get_session(session_id, UUID(current_user.id))
+        session = await DatabaseService.get_session_by_session_id(session_id, UUID(current_user.id))
         
         if not session:
             raise HTTPException(
@@ -241,9 +248,9 @@ async def get_session(
             )
         
         # Get additional data for session detail response
-        portfolio = await get_portfolio_data(session_id)
-        metrics = await get_metrics_data(session_id)
-        trades = await get_trades_data(session_id)
+        portfolio = await get_portfolio_data(session_id, current_user)
+        metrics = await get_metrics_data(session_id, current_user)
+        trades = await get_trades_data(session_id, current_user)
         
         return SessionDetailResponse.create(
             session=session,
@@ -264,14 +271,14 @@ async def get_session(
 
 @app.put("/{session_id}/status")
 async def update_session_status(
-    session_id: UUID,
+    session_id: str,
     session_update: ForwardTestSessionUpdate,
     current_user: User = Depends(get_current_user)
 ):
     """Update a forward testing session."""
     try:
         # Get existing session
-        session = await DatabaseService.get_session(session_id, UUID(current_user.id))
+        session = await DatabaseService.get_session_by_session_id(session_id, UUID(current_user.id))
         if not session:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -331,7 +338,7 @@ async def start_session(
             )
 
         # Start session through session manager
-        success, error_msg = await session_manager.start_session(session.id)
+        success, error_msg = await session_manager.start_session(session.id, UUID(current_user.id))
         if not success:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -367,7 +374,7 @@ async def start_session(
 
         return StandardResponse.success_response(
             message="Session started successfully"
-        )
+        ).dict()
 
     except HTTPException:
         raise
@@ -386,7 +393,7 @@ async def stop_session(
 ) -> Dict[str, Any]:
     """Stop a forward testing session."""
     try:
-        session = await DatabaseService.get_session(session_id, UUID(current_user.id))
+        session = await DatabaseService.get_session_by_session_id(session_id, UUID(current_user.id))
         if not session:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,

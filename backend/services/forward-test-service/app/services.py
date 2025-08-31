@@ -322,15 +322,19 @@ class DatabaseService:
         
         async with cls._pool.acquire() as conn:
             async with conn.transaction():
-                # Insert trade
+                # Insert trade (matching updated database schema)
+                # Get the session to retrieve the external session_id
+                session_row = await conn.fetchrow("SELECT session_id FROM forward_test_sessions WHERE id = $1", session_id)
+                external_session_id = session_row['session_id'] if session_row else str(session_id)
+                
                 await conn.execute("""
                     INSERT INTO trades (
-                        id, session_id, user_id, symbol, action, quantity,
+                        id, session_id, user_id, trade_id, symbol, action, quantity,
                         price, filled_quantity, commission, slippage, total_cost,
                         status, strategy_signal, executed_at, created_at
-                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
                 """,
-                    trade_id, session_id, user_id, trade_data['symbol'],
+                    trade_id, external_session_id, user_id, str(trade_id), trade_data['symbol'],
                     trade_data['action'], trade_data['quantity'], trade_data['price'],
                     trade_data['filled_quantity'], trade_data['commission'],
                     trade_data['slippage'], trade_data['total_cost'],
@@ -343,7 +347,7 @@ class DatabaseService:
                 
                 return TradeResponse(
                     id=trade_id,
-                    session_id=session_id,
+                    session_id=session_id,  # This is the UUID for the TradeResponse model
                     user_id=user_id,
                     symbol=trade_data['symbol'],
                     action=TradeAction(trade_data['action']),
