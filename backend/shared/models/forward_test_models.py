@@ -72,6 +72,7 @@ class ForwardTestSessionResponse(BaseModel):
     strategy_snapshot: Dict[str, Any]  # Full strategy JSON for historical analysis
     symbol: str
     session_name: Optional[str]
+    strategy_name: Optional[str]
     description: Optional[str]
     status: SessionStatus
     starting_balance: Decimal

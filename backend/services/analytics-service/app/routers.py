@@ -77,6 +77,9 @@ async def get_live_analytics(
         logger.info("Getting live analytics", session_id=session_id, user_id=str(current_user))
         
         # Check cache first (unless forced recalculation)
+        # Ensure Redis connection before cache operations
+        await cache_manager.ensure_connected()
+
         if not force_recalculate:
             cached_analytics = await cache_manager.get_live_analytics(session_id)
             if cached_analytics:

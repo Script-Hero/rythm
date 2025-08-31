@@ -134,6 +134,7 @@ class DatabaseService:
                 strategy_snapshot=strategy_snapshot,
                 symbol=session_data.symbol,
                 session_name=name,
+                strategy_name=strategy_name,
                 description=None,
                 status=SessionStatus.STOPPED,
                 starting_balance=session_data.starting_balance,
@@ -217,6 +218,7 @@ class DatabaseService:
             strategy_snapshot=json.loads(row["strategy_snapshot"]) if isinstance(row["strategy_snapshot"], str) else row["strategy_snapshot"],
             symbol=row["symbol"],
             session_name=row.get("name"),
+            strategy_name=row.get("strategy_name"),
             description=None,
             status=SessionStatus(row["status"]),
             starting_balance=row.get("initial_balance"),
@@ -308,6 +310,16 @@ class DatabaseService:
             )
             
             return result == "UPDATE 1"
+    
+    @classmethod
+    async def get_external_session_id(cls, internal_session_id: UUID) -> Optional[str]:
+        """Get external session ID (ft_format) from internal UUID."""
+        async with cls._pool.acquire() as conn:
+            result = await conn.fetchval(
+                "SELECT session_id FROM forward_test_sessions WHERE id = $1",
+                internal_session_id
+            )
+            return result
     
     @classmethod
     async def record_trade(
@@ -441,7 +453,7 @@ class StrategyService:
     
     @classmethod
     async def get_compiled_strategy_binary(cls, strategy_id: UUID, user_token: str) -> Optional[CompiledStrategy]:
-        """Get compiled strategy binary from Strategy Service Redis cache."""
+        """Get compiled strategy binary from Strategy Service Redis cache with fallback compilation."""
         try:
             logger.info("🔄 Requesting compiled strategy binary from Strategy Service", 
                        strategy_id=str(strategy_id))
@@ -469,8 +481,34 @@ class StrategyService:
                     return compiled_strategy
                 
                 elif response.status_code == 404:
-                    logger.warning("❌ Compiled strategy not found in cache", 
+                    logger.warning("❌ Compiled strategy not found in cache, attempting to compile", 
                                   strategy_id=str(strategy_id))
+                    
+                    # Fallback: Request compilation
+                    compile_response = await client.post(
+                        f"{settings.STRATEGY_SERVICE_URL}/{strategy_id}/compile",
+                        headers={"Authorization": f"Bearer {user_token}"}
+                    )
+                    
+                    if compile_response.status_code == 200:
+                        logger.info("✅ Strategy compiled successfully, fetching binary", 
+                                   strategy_id=str(strategy_id))
+                        
+                        # Now get the compiled binary
+                        binary_response = await client.get(
+                            f"{settings.STRATEGY_SERVICE_URL}/{strategy_id}/compiled",
+                            headers={"Authorization": f"Bearer {user_token}"}
+                        )
+                        
+                        if binary_response.status_code == 200:
+                            compiled_strategy = pickle.loads(binary_response.content)
+                            logger.info("🎯 Successfully compiled and retrieved strategy",
+                                       strategy_id=str(strategy_id))
+                            return compiled_strategy
+                    
+                    logger.error("❌ Failed to compile strategy", 
+                                strategy_id=str(strategy_id),
+                                compile_status=compile_response.status_code)
                     return None
                 else:
                     logger.error("❌ Failed to get compiled strategy binary", 

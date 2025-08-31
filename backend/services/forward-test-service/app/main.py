@@ -345,14 +345,15 @@ async def start_session(
                 detail=f"Failed to start session: {error_msg}"
             )
 
-        # Start strategy execution
+        # Start strategy execution with proper initial capital
         runtime_data = session_manager.active_sessions.get(session.id)
         if runtime_data and runtime_data.compiled_strategy:
             success, error_msg = await strategy_executor.start_strategy_execution(
                 session_id=session.id,
                 user_id=UUID(current_user.id),
                 symbol=session.symbol,
-                compiled_strategy=runtime_data.compiled_strategy
+                compiled_strategy=runtime_data.compiled_strategy,
+                initial_capital=float(session.starting_balance)
             )
 
             if not success:

@@ -8,13 +8,14 @@ from typing import Optional
 from uuid import UUID, uuid4
 
 from sqlalchemy import (
-    BigInteger, Boolean, Column, DateTime, ForeignKey, 
+    BigInteger, Boolean, Column, DateTime, ForeignKey,
     Integer, Numeric, String, Text, JSON
 )
 from sqlalchemy.dialects.postgresql import UUID as PGUUID, ARRAY
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
+from sqlalchemy.ext.hybrid import hybrid_property
 
 Base = declarative_base()
 
@@ -83,22 +84,43 @@ class ForwardTestSession(Base):
 
 
 class Trade(Base):
-    """Trade model - mirrors main database."""
+    """Trade model aligned with current DB schema."""
     __tablename__ = "trades"
-    
+
     id = Column(PGUUID(as_uuid=True), primary_key=True, default=uuid4)
     session_id = Column(String(100), ForeignKey("forward_test_sessions.session_id"), nullable=False)
+    user_id = Column(PGUUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
     trade_id = Column(String(100), nullable=False)
     symbol = Column(String(50), nullable=False)
-    side = Column(String(10), nullable=False)
-    order_type = Column(String(20), nullable=False)
+    action = Column(String(10), nullable=False)
     quantity = Column(Numeric(20, 8), nullable=False)
     price = Column(Numeric(20, 8), nullable=False)
-    fees = Column(Numeric(20, 8), default=0)
-    pnl = Column(Numeric(20, 8))
+    filled_quantity = Column(Numeric(20, 8), nullable=False)
+    commission = Column(Numeric(20, 8), default=0)
+    slippage = Column(Numeric(20, 8), default=0)
+    total_cost = Column(Numeric(20, 8), nullable=False)
     status = Column(String(20), default="FILLED")
-    execution_time = Column(DateTime, nullable=False)
+    strategy_signal = Column(JSON)
+    executed_at = Column(DateTime, nullable=False)
     created_at = Column(DateTime, default=func.now())
+
+    # Backward-compat properties used by analytics code
+    @hybrid_property
+    def side(self) -> Optional[str]:  # type: ignore[override]
+        return self.action
+
+    @hybrid_property
+    def fees(self) -> Optional[Decimal]:  # type: ignore[override]
+        return self.commission
+
+    @hybrid_property
+    def execution_time(self) -> Optional[datetime]:  # type: ignore[override]
+        return self.executed_at
+
+    @hybrid_property
+    def pnl(self) -> Optional[Decimal]:
+        # PnL not stored in DB for forward-test trades; analytics will treat as absent
+        return None
 
 
 class BacktestResult(Base):
@@ -128,15 +150,19 @@ class BacktestResult(Base):
 
 
 class ChartData(Base):
-    """Chart data model - mirrors main database."""
+    """Chart data model - mirrors main database.
+
+    Note: The DB column is named 'metadata', which conflicts with SQLAlchemy's
+    Declarative Base attribute. Map it to a differently named attribute.
+    """
     __tablename__ = "chart_data"
-    
+
     id = Column(BigInteger, primary_key=True, autoincrement=True)
     session_id = Column(String(100), ForeignKey("forward_test_sessions.session_id"), nullable=False)
     data_type = Column(String(20), nullable=False)
     timestamp = Column(BigInteger, nullable=False)
     value = Column(Numeric(20, 8), nullable=False)
-    extra_data = Column(JSON)
+    metadata_json = Column("metadata", JSON)
     created_at = Column(DateTime, default=func.now())
 
 

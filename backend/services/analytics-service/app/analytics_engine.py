@@ -129,7 +129,7 @@ class AnalyticsEngine:
         result = await db.execute(
             select(Trade)
             .where(Trade.session_id == session_id)
-            .order_by(Trade.execution_time)
+            .order_by(Trade.executed_at)
         )
         return result.scalars().all()
     

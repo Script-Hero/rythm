@@ -31,10 +31,11 @@ logger = structlog.get_logger()
 class AnalyticsKafkaProcessor:
     """Kafka event processor for analytics calculations."""
     
-    def __init__(self):
+    def __init__(self, cache_manager: Optional[CacheManager] = None):
         self.consumer: Optional[AIOKafkaConsumer] = None
         self.analytics_engine = AnalyticsEngine()
-        self.cache_manager = CacheManager()
+        # Reuse a shared CacheManager (connected in app startup) if provided
+        self.cache_manager = cache_manager or CacheManager()
         self._running = False
         
         # Topics to subscribe to - use proper enum values
@@ -167,7 +168,8 @@ class AnalyticsKafkaProcessor:
         }
         """
         try:
-            session_id = message.get("session_id")
+            # Prefer external (ft_*) for DB lookups, fallback to resolving UUID
+            session_id = message.get("external_session_id") or message.get("session_id")
             if not session_id:
                 logger.warning("Trade execution missing session_id", message=message)
                 return
@@ -175,6 +177,19 @@ class AnalyticsKafkaProcessor:
             logger.info("Processing trade execution", session_id=session_id, trade_id=message.get("trade_id"))
             
             async with get_db_session() as db:
+                # If we received UUID, resolve to external string for DB operations
+                if session_id and not str(session_id).startswith("ft_"):
+                    try:
+                        from sqlalchemy import select
+                        from .models import ForwardTestSession
+                        result = await db.execute(
+                            select(ForwardTestSession.session_id).where(ForwardTestSession.id == session_id)
+                        )
+                        resolved = result.scalar_one_or_none()
+                        if resolved:
+                            session_id = resolved
+                    except Exception as e:
+                        logger.warning("Failed to resolve UUID session_id to external id", error=str(e))
                 # Update session trade count and metrics
                 await self._update_session_trade_metrics(db, session_id, message)
                 
@@ -210,7 +225,7 @@ class AnalyticsKafkaProcessor:
         }
         """
         try:
-            session_id = message.get("session_id")
+            session_id = message.get("external_session_id") or message.get("session_id")
             if not session_id:
                 logger.warning("Portfolio update missing session_id", message=message)
                 return
@@ -218,6 +233,19 @@ class AnalyticsKafkaProcessor:
             logger.debug("Processing portfolio update", session_id=session_id)
             
             async with get_db_session() as db:
+                # Resolve UUID to external session id if necessary
+                if session_id and not str(session_id).startswith("ft_"):
+                    try:
+                        from sqlalchemy import select
+                        from .models import ForwardTestSession
+                        result = await db.execute(
+                            select(ForwardTestSession.session_id).where(ForwardTestSession.id == session_id)
+                        )
+                        resolved = result.scalar_one_or_none()
+                        if resolved:
+                            session_id = resolved
+                    except Exception as e:
+                        logger.warning("Failed to resolve UUID session_id to external id", error=str(e))
                 # Store portfolio value for drawdown calculations
                 await self._store_portfolio_value(db, session_id, message)
                 
@@ -328,22 +356,33 @@ class AnalyticsKafkaProcessor:
         from datetime import datetime
         
         try:
-            total_value = portfolio_message.get("total_value")
-            timestamp_str = portfolio_message.get("timestamp")
-            
-            if not total_value or not timestamp_str:
+            # Accept both flat and nested message shapes
+            payload = portfolio_message.get("portfolio_data", portfolio_message)
+            total_value = payload.get("total_value")
+            ts_value = portfolio_message.get("timestamp") or payload.get("last_updated") or payload.get("timestamp")
+
+            if total_value is None or ts_value is None:
                 return
-            
-            # Parse timestamp
-            timestamp = datetime.fromisoformat(timestamp_str.replace("Z", "+00:00"))
-            
+
+            # Parse timestamp (float/int epoch seconds or ISO string)
+            if isinstance(ts_value, (int, float)):
+                timestamp = datetime.utcfromtimestamp(float(ts_value))
+            elif isinstance(ts_value, str):
+                ts_str = ts_value
+                if ts_str.isdigit():
+                    timestamp = datetime.utcfromtimestamp(float(ts_str))
+                else:
+                    timestamp = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+            else:
+                return
+
             # Store portfolio value
             chart_data = ChartData(
                 session_id=session_id,
                 data_type="portfolio",
                 timestamp=int(timestamp.timestamp()),
                 value=Decimal(str(total_value)),
-                metadata={"cash_balance": portfolio_message.get("cash_balance")}
+                metadata_json={"cash_balance": payload.get("cash_balance")}
             )
             
             db.add(chart_data)

@@ -172,6 +172,10 @@ async def handle_websocket_message(user_id: UUID, message: str):
                 "timestamp": time.time()
             })
             
+        elif message_type == "pong":
+            # Handle pong responses (client responding to our ping)
+            logger.debug("Received pong from client", user_id=str(user_id))
+            
         elif message_type == "subscribe":
             # Subscribe to specific session updates
             session_id = data.get("session_id")

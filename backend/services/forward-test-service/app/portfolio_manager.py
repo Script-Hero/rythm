@@ -187,10 +187,19 @@ class PortfolioManager:
     ) -> Optional[Trade]:
         """Process a trading signal from strategy execution."""
         try:
+            logger.debug("Signal processing start",
+                       session_id=str(session_id),
+                       raw_signal=signal,
+                       market_data=market_data)
+            
             # Validate signal structure
             validated_signal = await self._validate_signal(signal, session_id)
             if not validated_signal:
                 return None
+            
+            logger.debug("Signal validation complete",
+                       session_id=str(session_id),
+                       validated_signal=validated_signal)
             
             if session_id not in self.portfolios:
                 logger.warning("Portfolio not found for signal, attempting to restore", 
@@ -421,6 +430,14 @@ class PortfolioManager:
             
             portfolio = self.portfolios[session_id]
             
+            # Debug portfolio state  
+            logger.debug("Portfolio state check",
+                       session_id=str(session_id),
+                       cash_balance=str(portfolio.cash_balance),
+                       cash_balance_type=type(portfolio.cash_balance).__name__,
+                       total_value=str(portfolio.total_value),
+                       initial_capital=str(portfolio.initial_capital))
+            
             # Validate current_price
             if current_price is None or current_price <= 0:
                 logger.warning("Invalid current price for trade calculation", 
@@ -434,19 +451,36 @@ class PortfolioManager:
             if 'position_size' in signal:
                 try:
                     position_size_percent = signal['position_size']
-                    position_size_decimal = Decimal(str(position_size_percent))
-                    if position_size_decimal <= 0 or position_size_decimal > 1:
-                        logger.warning("Invalid position size percent in signal, using default", 
+                    if position_size_percent is None or position_size_percent == "":
+                        logger.warning("Null/empty position_size in signal, using default", 
                                      session_id=session_id, 
                                      position_size=position_size_percent)
-                        position_size_decimal = Decimal('0.1')  # 10% default
+                        position_size_decimal = Decimal('0.1')
                     else:
-                        logger.debug("Using position_size from signal", 
-                                   session_id=session_id,
-                                   position_size=float(position_size_decimal))
+                        # Check for special float values that can't be converted to Decimal
+                        if isinstance(position_size_percent, float) and (
+                            position_size_percent != position_size_percent or  # NaN check
+                            position_size_percent == float('inf') or 
+                            position_size_percent == float('-inf')
+                        ):
+                            logger.warning("Invalid float value in position_size, using default", 
+                                         session_id=str(session_id), 
+                                         position_size=position_size_percent)
+                            position_size_decimal = Decimal('0.1')
+                        else:
+                            position_size_decimal = Decimal(str(position_size_percent))
+                            if position_size_decimal <= 0 or position_size_decimal > 1:
+                                logger.warning("Invalid position size percent in signal, using default", 
+                                             session_id=str(session_id), 
+                                             position_size=position_size_percent)
+                                position_size_decimal = Decimal('0.1')  # 10% default
+                            else:
+                                logger.debug("Using position_size from signal", 
+                                           session_id=str(session_id),
+                                           position_size=float(position_size_decimal))
                 except (ValueError, TypeError, decimal.InvalidOperation) as e:
                     logger.warning("Invalid position size format in signal, using default", 
-                                 session_id=session_id, 
+                                 session_id=str(session_id), 
                                  position_size=signal.get('position_size'),
                                  error=str(e))
                     position_size_decimal = Decimal('0.1')
@@ -455,21 +489,31 @@ class PortfolioManager:
             elif 'quantity' in signal:
                 try:
                     quantity_raw = signal['quantity']
-                    quantity_float = float(quantity_raw)
-                    if quantity_float <= 0:
-                        logger.warning("Invalid quantity in signal, using default position size", 
-                                     session_id=session_id, quantity=quantity_raw)
+                    if quantity_raw is None or quantity_raw == "":
+                        logger.warning("Null/empty quantity in signal, using default position size", 
+                                     session_id=str(session_id), quantity=quantity_raw)
                         position_size_decimal = Decimal('0.1')
                     else:
-                        # Convert quantity to position size percentage (quantity as percentage of portfolio)
-                        position_size_decimal = Decimal(str(min(quantity_float / 100.0, 1.0)))
-                        logger.debug("Converted quantity to position_size", 
-                                   session_id=session_id,
-                                   original_quantity=quantity_float,
-                                   position_size=float(position_size_decimal))
+                        quantity_float = float(quantity_raw)
+                        # Check for special float values that can't be processed
+                        if (quantity_float != quantity_float or  # NaN check
+                            quantity_float == float('inf') or 
+                            quantity_float == float('-inf') or
+                            quantity_float <= 0):
+                            logger.warning("Invalid quantity value in signal, using default position size", 
+                                         session_id=str(session_id), quantity=quantity_raw)
+                            position_size_decimal = Decimal('0.1')
+                        else:
+                            # Convert quantity to position size percentage (quantity as percentage of portfolio)
+                            converted_size = min(quantity_float / 100.0, 1.0)
+                            position_size_decimal = Decimal(str(converted_size))
+                            logger.debug("Converted quantity to position_size", 
+                                       session_id=str(session_id),
+                                       original_quantity=quantity_float,
+                                       position_size=float(position_size_decimal))
                 except (ValueError, TypeError, decimal.InvalidOperation) as e:
                     logger.warning("Failed to convert quantity to position size, using default", 
-                                 session_id=session_id, 
+                                 session_id=str(session_id), 
                                  quantity=signal.get('quantity'),
                                  error=str(e))
                     position_size_decimal = Decimal('0.1')
@@ -477,7 +521,7 @@ class PortfolioManager:
             # Final fallback - use default
             if position_size_decimal is None:
                 logger.debug("No position_size or quantity found in signal, using default", 
-                           session_id=session_id)
+                           session_id=str(session_id))
                 position_size_decimal = Decimal('0.1')  # 10% default
             
             if action == 'BUY':
@@ -485,23 +529,76 @@ class PortfolioManager:
                 available_cash = portfolio.cash_balance
                 if available_cash <= 0:
                     logger.debug("No available cash for buy order", 
-                               session_id=session_id, cash=available_cash)
+                               session_id=str(session_id), cash=str(available_cash))
                     return Decimal('0')
                 
-                max_trade_value = available_cash * position_size_decimal
-                
-                # Account for fees
+                # Adjust for fees: when position_size = 1.0, we want to use all available cash
+                # accounting for fees, so max_trade_value should be what we can afford after fees
                 fee_rate = self.default_fee_rate
-                denominator = current_price * (Decimal('1') + fee_rate)
                 
-                if denominator <= 0:
-                    logger.warning("Invalid denominator for quantity calculation", 
-                                 session_id=session_id, price=current_price, fee_rate=fee_rate)
+                # Calculate the maximum trade value considering fees
+                # If trade_value = X, then total_cost = X * (1 + fee_rate)
+                # We want total_cost <= available_cash * position_size_decimal
+                logger.debug("Before max_total_cost calculation",
+                           session_id=str(session_id),
+                           available_cash=str(available_cash),
+                           available_cash_type=type(available_cash).__name__,
+                           position_size_decimal=str(position_size_decimal),
+                           position_size_type=type(position_size_decimal).__name__)
+                
+                # Add small buffer to prevent rounding errors
+                max_total_cost = available_cash * position_size_decimal * Decimal('0.9999')
+                
+                logger.debug("After max_total_cost calculation",
+                           session_id=str(session_id),
+                           max_total_cost=str(max_total_cost),
+                           max_total_cost_type=type(max_total_cost).__name__,
+                           fee_rate=str(fee_rate))
+                
+                max_trade_value = max_total_cost / (Decimal('1') + fee_rate)
+                
+                logger.debug("After max_trade_value calculation",
+                           session_id=str(session_id),
+                           max_trade_value=str(max_trade_value),
+                           max_trade_value_type=type(max_trade_value).__name__)
+                
+                # Calculate quantity (account for slippage on buy orders)
+                execution_price = current_price * (Decimal('1') + self.default_slippage)
+                
+                logger.debug("Before division",
+                           session_id=str(session_id),
+                           denominator=str(execution_price),
+                           denominator_type=type(execution_price).__name__,
+                           slippage_adjustment=str(self.default_slippage))
+                
+                if execution_price <= 0:
+                    logger.warning("Invalid execution price for quantity calculation", 
+                                 session_id=str(session_id), base_price=current_price)
                     return Decimal('0')
                 
-                max_quantity = max_trade_value / denominator
+                max_quantity = max_trade_value / execution_price
                 
-                return max(Decimal('0'), max_quantity.quantize(Decimal('0.00000001')))
+                logger.debug("After division",
+                           session_id=str(session_id),
+                           max_quantity=str(max_quantity),
+                           max_quantity_type=type(max_quantity).__name__)
+                
+                try:
+                    # Round to 4 decimal places to avoid precision issues
+                    quantized_quantity = round(float(max_quantity), 4)
+                    quantized_quantity = Decimal(str(quantized_quantity))
+                    
+                    logger.debug("After quantization",
+                               session_id=str(session_id),
+                               quantized_quantity=str(quantized_quantity))
+                    
+                    return max(Decimal('0'), quantized_quantity)
+                except decimal.InvalidOperation as e:
+                    logger.debug("Quantization failed",
+                               session_id=str(session_id),
+                               max_quantity=str(max_quantity),
+                               error=str(e))
+                    return Decimal('0')
             
             elif action == 'SELL':
                 # Get symbol from signal (should be set by signal enrichment)
@@ -523,15 +620,32 @@ class PortfolioManager:
                     # Sell percentage or all
                     sell_percent = signal.get('sell_percent', 1.0)  # 100% default
                     try:
-                        sell_percent_decimal = Decimal(str(sell_percent))
-                        if sell_percent_decimal <= 0 or sell_percent_decimal > 1:
-                            logger.warning("Invalid sell percent, using 100%", 
-                                         session_id=session_id, 
+                        if sell_percent is None or sell_percent == "":
+                            logger.warning("Null/empty sell_percent, using 100%", 
+                                         session_id=str(session_id), 
                                          sell_percent=sell_percent)
                             sell_percent_decimal = Decimal('1.0')
+                        else:
+                            # Check for special float values
+                            if isinstance(sell_percent, float) and (
+                                sell_percent != sell_percent or  # NaN check
+                                sell_percent == float('inf') or 
+                                sell_percent == float('-inf')
+                            ):
+                                logger.warning("Invalid float value in sell_percent, using 100%", 
+                                             session_id=str(session_id), 
+                                             sell_percent=sell_percent)
+                                sell_percent_decimal = Decimal('1.0')
+                            else:
+                                sell_percent_decimal = Decimal(str(sell_percent))
+                            if sell_percent_decimal <= 0 or sell_percent_decimal > 1:
+                                logger.warning("Invalid sell percent, using 100%", 
+                                             session_id=str(session_id), 
+                                             sell_percent=sell_percent)
+                                sell_percent_decimal = Decimal('1.0')
                     except (ValueError, TypeError, decimal.InvalidOperation) as e:
                         logger.warning("Invalid sell percent format, using 100%", 
-                                     session_id=session_id, 
+                                     session_id=str(session_id), 
                                      sell_percent=sell_percent,
                                      error=str(e))
                         sell_percent_decimal = Decimal('1.0')
@@ -539,23 +653,30 @@ class PortfolioManager:
                     sell_quantity = current_quantity * sell_percent_decimal
                     
                     logger.debug("Calculated sell quantity", 
-                               session_id=session_id,
+                               session_id=str(session_id),
                                symbol=symbol,
                                current_quantity=float(current_quantity),
                                sell_percent=float(sell_percent_decimal),
                                sell_quantity=float(sell_quantity))
                     
-                    return max(Decimal('0'), sell_quantity.quantize(Decimal('0.00000001')))
+                    # Round to 4 decimal places to avoid precision issues
+                    quantized_sell = round(float(sell_quantity), 4)
+                    return max(Decimal('0'), Decimal(str(quantized_sell)))
                 else:
                     logger.debug("No position found for sell order", 
-                               session_id=session_id, symbol=symbol)
+                               session_id=str(session_id), symbol=symbol)
                     return Decimal('0')
             
             return Decimal('0')
             
         except Exception as e:
             logger.error("Failed to calculate trade quantity", 
-                        session_id=session_id, error=str(e))
+                        session_id=str(session_id), 
+                        action=action,
+                        signal=signal,
+                        current_price=str(current_price),
+                        error=str(e),
+                        error_type=type(e).__name__)
             return Decimal('0')
     
     async def _execute_trade(
@@ -837,8 +958,19 @@ class PortfolioManager:
                     return obj
                 
                 converted_data = str_to_decimal(portfolio_data)
+                
+                logger.debug("Portfolio restoration data",
+                           session_id=str(session_id),
+                           cash_balance_converted=str(converted_data.get('cash_balance')),
+                           cash_balance_type=type(converted_data.get('cash_balance')).__name__)
+                
                 portfolio = Portfolio(**converted_data)
                 self.portfolios[session_id] = portfolio
+                
+                logger.debug("Portfolio restored successfully",
+                           session_id=str(session_id),
+                           portfolio_cash_balance=str(portfolio.cash_balance),
+                           portfolio_cash_type=type(portfolio.cash_balance).__name__)
                 
                 return True
             
@@ -865,10 +997,10 @@ class PortfolioManager:
                 uid = self.portfolios[session_id].user_id
                 user_id_value = str(uid)
             
-            # Publish trade executed event
+            # Publish trade executed event (internal bus)
             await session_event_publisher.publish_trade_executed(
                 session_id=session_id,
-                user_id=UUID(user_id_value) if user_id_value else trade.session_id,  # fallback
+                user_id=UUID(user_id_value) if user_id_value else session_id,
                 trade_data=asdict(trade)
             )
             
@@ -895,17 +1027,41 @@ class PortfolioManager:
             
             # Publish to Kafka
             if self.kafka_producer:
+                # Get external session ID for analytics service
+                from .services import DatabaseService
+                external_session_id = await DatabaseService.get_external_session_id(session_id)
+                
+                # Publish trade execution (include both internal and external session ids)
                 await self.kafka_producer.send_message(
                     topic=Topics.TRADE_EXECUTIONS.value,
                     message={
                         "event_type": "TRADE_EXECUTED",
+                        # internal UUID for services expecting UUID (notification)
                         "session_id": str(session_id),
+                        # external id for services using DB session_id
+                        "external_session_id": external_session_id,
+                        "user_id": user_id_value or str(session_id),
                         "trade": asdict(trade),
                         "market_data": market_data,
-                        "portfolio_summary": portfolio_summary
+                        "timestamp": time.time()
                     },
-                    key=str(session_id)
+                    key=external_session_id or str(session_id)
                 )
+                
+                # Publish portfolio update (include both internal and external session ids)
+                if portfolio_summary:
+                    await self.kafka_producer.send_message(
+                        topic=Topics.PORTFOLIO_UPDATES.value,
+                        message={
+                            "event_type": "PORTFOLIO_UPDATE",
+                            "session_id": str(session_id),
+                            "external_session_id": external_session_id,
+                            "user_id": user_id_value or str(session_id),
+                            "portfolio_data": portfolio_summary,
+                            "timestamp": time.time()
+                        },
+                        key=external_session_id or str(session_id)
+                    )
             
         except Exception as e:
             logger.error("Failed to publish trade events", 

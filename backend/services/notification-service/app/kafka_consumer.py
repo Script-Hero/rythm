@@ -165,10 +165,14 @@ class NotificationKafkaConsumer:
                 "data": data
             }
             
-            # Send to session subscribers
-            delivered_count = await self.connection_manager.send_to_session(
-                UUID(session_id), notification
-            )
+            # Send to session subscribers (handle non-UUID session ids safely)
+            delivered_count = 0
+            try:
+                delivered_count = await self.connection_manager.send_to_session(
+                    UUID(session_id), notification
+                )
+            except Exception:
+                logger.warning("Session ID is not a UUID; skipping session broadcast", session_id=session_id)
             
             # Also send to specific user if provided
             if user_id:
@@ -187,34 +191,42 @@ class NotificationKafkaConsumer:
         try:
             session_id = data.get("session_id")
             user_id = data.get("user_id")
+            portfolio_data = data.get("portfolio_data", data.get("data", {}))
             
             if not session_id:
                 logger.warning("Portfolio update missing session_id", data=data)
                 return
             
-            # Create notification message
+            # Create notification message with proper structure for frontend
             notification = {
                 "type": "portfolio_update",
                 "session_id": session_id,
-                "portfolio": data.get("portfolio", {}),
-                "positions": data.get("positions", []),
-                "balance": data.get("balance", {}),
-                "timestamp": time.time(),
-                "data": data
+                "data": {
+                    "portfolio": portfolio_data,
+                    "session_id": session_id,
+                    "user_id": user_id,
+                    "timestamp": data.get("timestamp", time.time())
+                },
+                "timestamp": data.get("timestamp", time.time())
             }
             
             # Send to session subscribers
-            delivered_count = await self.connection_manager.send_to_session(
-                UUID(session_id), notification
-            )
+            delivered_count = 0
+            try:
+                delivered_count = await self.connection_manager.send_to_session(
+                    UUID(session_id), notification
+                )
+            except Exception:
+                logger.warning("Session ID is not a UUID; skipping session broadcast", session_id=session_id)
             
             # Also send to specific user if provided
             if user_id:
                 await self.connection_manager.send_to_user(UUID(user_id), notification)
             
-            logger.debug("Processed portfolio update", 
+            logger.info("Processed portfolio update", 
                         session_id=session_id,
-                        delivered_count=delivered_count)
+                        delivered_count=delivered_count,
+                        has_portfolio_data=bool(portfolio_data))
             
         except Exception as e:
             logger.error("Failed to handle portfolio update", error=str(e), data=data)
@@ -224,37 +236,42 @@ class NotificationKafkaConsumer:
         try:
             session_id = data.get("session_id")
             user_id = data.get("user_id")
-            trade_id = data.get("trade_id")
+            trade_data = data.get("trade", {})
             
             if not session_id:
                 logger.warning("Trade execution missing session_id", data=data)
                 return
             
-            # Create notification message
+            # Create notification message with proper structure for frontend
             notification = {
                 "type": "trade_execution",
                 "session_id": session_id,
-                "trade_id": trade_id,
-                "trade": data.get("trade", {}),
-                "execution_price": data.get("execution_price"),
-                "quantity": data.get("quantity"),
-                "action": data.get("action"),
-                "symbol": data.get("symbol"),
-                "timestamp": time.time(),
-                "data": data
+                "data": {
+                    "trade": trade_data,
+                    "session_id": session_id,
+                    "user_id": user_id,
+                    "timestamp": data.get("timestamp", time.time())
+                },
+                "timestamp": data.get("timestamp", time.time())
             }
             
             # Send to session subscribers
-            delivered_count = await self.connection_manager.send_to_session(
-                UUID(session_id), notification
-            )
+            delivered_count = 0
+            try:
+                delivered_count = await self.connection_manager.send_to_session(
+                    UUID(session_id), notification
+                )
+            except Exception:
+                logger.warning("Session ID is not a UUID; skipping session broadcast", session_id=session_id)
             
             # Also send to specific user if provided
             if user_id:
                 await self.connection_manager.send_to_user(UUID(user_id), notification)
             
-            logger.debug("Processed trade execution", 
-                        trade_id=trade_id,
+            logger.info("Processed trade execution", 
+                        trade_id=trade_data.get("trade_id"),
+                        action=trade_data.get("action"),
+                        symbol=trade_data.get("symbol"),
                         session_id=session_id,
                         delivered_count=delivered_count)
             
@@ -286,9 +303,13 @@ class NotificationKafkaConsumer:
             }
             
             # Send to session subscribers
-            delivered_count = await self.connection_manager.send_to_session(
-                UUID(session_id), notification
-            )
+            delivered_count = 0
+            try:
+                delivered_count = await self.connection_manager.send_to_session(
+                    UUID(session_id), notification
+                )
+            except Exception:
+                logger.warning("Session ID is not a UUID; skipping session broadcast", session_id=session_id)
             
             # Also send to specific user if provided
             if user_id:
@@ -319,9 +340,12 @@ class NotificationKafkaConsumer:
             
             # Route based on session_id or user_id
             if session_id:
-                delivered_count = await self.connection_manager.send_to_session(
-                    UUID(session_id), notification
-                )
+                try:
+                    delivered_count = await self.connection_manager.send_to_session(
+                        UUID(session_id), notification
+                    )
+                except Exception:
+                    logger.warning("Session ID is not a UUID; skipping session broadcast", session_id=session_id)
                 logger.debug("Processed session realtime update", 
                            update_type=update_type,
                            session_id=session_id,

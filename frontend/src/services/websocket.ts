@@ -316,7 +316,8 @@ class WebSocketService {
           console.error('❌ WebSocket: Message handler error', error);
         }
       });
-    } else {
+    } else if (message.type !== 'welcome' && message.type !== 'pong') {
+      // Only warn for unexpected message types, not welcome/pong
       console.log('⚠️ WebSocket: No handlers for message type', message.type);
     }
   }

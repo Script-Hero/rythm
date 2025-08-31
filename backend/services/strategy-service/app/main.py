@@ -560,13 +560,13 @@ async def compile_strategy(
         
         logger.info("📊 Strategy found for compilation", 
                    strategy_id=str(strategy_id),
-                   strategy_name=getattr(strategy, 'name', 'Unknown'),
-                   json_tree_present=hasattr(strategy, 'json_tree') and strategy.json_tree is not None)
+                   strategy_name=strategy.get('name', 'Unknown'),
+                   json_tree_present=strategy.get('json_tree') is not None)
         
         # Log strategy structure
-        if hasattr(strategy, 'json_tree') and strategy.json_tree:
-            nodes = strategy.json_tree.get("nodes", [])
-            edges = strategy.json_tree.get("edges", [])
+        if strategy.get('json_tree'):
+            nodes = strategy['json_tree'].get("nodes", [])
+            edges = strategy['json_tree'].get("edges", [])
             logger.info("📊 Strategy structure for compilation", 
                        node_count=len(nodes),
                        edge_count=len(edges),
@@ -575,7 +575,7 @@ async def compile_strategy(
         # Compile strategy
         logger.info("🔧 Starting compilation process")
         compiler = StrategyCompiler()
-        result = compiler.compile_strategy(strategy.json_tree)
+        result = compiler.compile_strategy(strategy['json_tree'])
         
         logger.info("🔧 Compilation process completed", 
                    success=result.success,

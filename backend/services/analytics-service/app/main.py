@@ -34,7 +34,7 @@ logger = structlog.get_logger()
 
 # Global services
 cache_manager = CacheManager()
-kafka_processor = AnalyticsKafkaProcessor()
+kafka_processor = AnalyticsKafkaProcessor(cache_manager=cache_manager)
 
 
 @asynccontextmanager

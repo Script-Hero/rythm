@@ -24,6 +24,8 @@ class JSONEncoder(json.JSONEncoder):
             return float(obj)
         elif isinstance(obj, datetime):
             return obj.isoformat()
+        elif hasattr(obj, '__str__') and 'UUID' in str(type(obj)):
+            return str(obj)
         elif hasattr(obj, '__dict__'):
             return obj.__dict__
         return super().default(obj)

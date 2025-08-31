@@ -9,7 +9,7 @@ import time
 from datetime import datetime, timedelta
 from decimal import Decimal
 from typing import Dict, List, Optional, Any, Tuple
-from uuid import UUID
+from uuid import UUID, uuid4
 from dataclasses import dataclass, asdict
 from collections import defaultdict, deque
 import statistics
@@ -216,7 +216,7 @@ class PerformanceMonitor:
             
             # Create trade metrics
             trade_metrics = TradeMetrics(
-                trade_id=trade_data.get('trade_id', str(UUID.uuid4())),
+                trade_id=trade_data.get('trade_id', str(uuid4())),
                 session_id=session_id,
                 timestamp=time.time(),
                 symbol=trade_data.get('symbol', ''),

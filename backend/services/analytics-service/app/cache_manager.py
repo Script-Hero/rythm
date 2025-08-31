@@ -61,6 +61,16 @@ class CacheManager:
             await self.redis_client.close()
             self._connected = False
             logger.info("Disconnected from Redis")
+
+    async def ensure_connected(self) -> bool:
+        """Ensure a Redis connection is available; attempts to connect if not connected."""
+        if self._connected and self.redis_client:
+            return True
+        try:
+            await self.connect()
+            return True
+        except Exception:
+            return False
     
     def _get_key(self, key_type: str, identifier: str) -> str:
         """Generate Redis key with consistent naming."""
