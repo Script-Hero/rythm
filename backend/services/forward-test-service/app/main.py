@@ -423,7 +423,7 @@ async def stop_session(
         
         return StandardResponse.success_response(
             message="Session stopped successfully"
-        )
+        ).dict()
         
     except HTTPException:
         raise
@@ -465,7 +465,7 @@ async def pause_session(
             reason="User requested"
         )
 
-        return StandardResponse.success_response(message="Session paused successfully")
+        return StandardResponse.success_response(message="Session paused successfully").dict()
 
     except HTTPException:
         raise
@@ -504,7 +504,7 @@ async def resume_session(
             reason="User requested"
         )
 
-        return StandardResponse.success_response(message="Session resumed successfully")
+        return StandardResponse.success_response(message="Session resumed successfully").dict()
 
     except HTTPException:
         raise

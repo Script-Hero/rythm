@@ -181,18 +181,11 @@ async def handle_websocket_message(user_id: UUID, message: str):
             session_id = data.get("session_id")
             if session_id:
                 try:
-                    # Handle both UUID format and string format (ft_ prefixed)
-                    if session_id.startswith("ft_"):
-                        # For frontend session IDs like ft_1756361372017, skip UUID conversion
-                        # These are external session IDs, not UUIDs
-                        logger.info("User subscribed to session", 
-                                  user_id=str(user_id), session_id=session_id)
-                    else:
-                        # Try to parse as UUID
-                        session_uuid = UUID(session_id)
-                        await connection_manager.subscribe_to_session(user_id, session_uuid)
-                        logger.info("User subscribed to session", 
-                                  user_id=str(user_id), session_id=session_id)
+                    # Parse session_id as UUID
+                    session_uuid = UUID(session_id)
+                    await connection_manager.subscribe_to_session(user_id, session_uuid)
+                    logger.info("User subscribed to session", 
+                              user_id=str(user_id), session_id=session_id)
                 except ValueError:
                     logger.warning("Invalid session_id format", 
                                  user_id=str(user_id), session_id=session_id)
@@ -202,17 +195,11 @@ async def handle_websocket_message(user_id: UUID, message: str):
             session_id = data.get("session_id")
             if session_id:
                 try:
-                    # Handle both UUID format and string format (ft_ prefixed)
-                    if session_id.startswith("ft_"):
-                        # For frontend session IDs like ft_1756361372017, skip UUID conversion
-                        logger.info("User unsubscribed from session", 
-                                  user_id=str(user_id), session_id=session_id)
-                    else:
-                        # Try to parse as UUID
-                        session_uuid = UUID(session_id)
-                        await connection_manager.unsubscribe_from_session(user_id, session_uuid)
-                        logger.info("User unsubscribed from session", 
-                                  user_id=str(user_id), session_id=session_id)
+                    # Parse session_id as UUID
+                    session_uuid = UUID(session_id)
+                    await connection_manager.unsubscribe_from_session(user_id, session_uuid)
+                    logger.info("User unsubscribed from session", 
+                              user_id=str(user_id), session_id=session_id)
                 except ValueError:
                     logger.warning("Invalid session_id format", 
                                  user_id=str(user_id), session_id=session_id)

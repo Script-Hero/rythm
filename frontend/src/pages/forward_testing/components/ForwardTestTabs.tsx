@@ -10,7 +10,8 @@ import {
   Metrics,
   Trade,
   Alert,
-  ForwardTestSettings as ForwardTestingSettings
+  ForwardTestSettings as ForwardTestingSettings,
+  SessionIdentifier
 } from '@/types/forward-testing';
 
 // Types now imported from shared types file
@@ -24,6 +25,7 @@ interface ForwardTestTabsProps {
   alerts: Alert[];
   currentPrice: number;
   currentVolume: number;
+  sessionId?: SessionIdentifier;
   settings: ForwardTestingSettings;
   isRunning: boolean;
   onSettingsChange: (updates: Partial<ForwardTestingSettings>) => void;
@@ -61,6 +63,7 @@ export const ForwardTestTabs: React.FC<ForwardTestTabsProps> = ({
               portfolio={portfolio}
               metrics={metrics}
               currentPrice={currentPrice}
+              initialBalance={settings.initialBalance}
             />
           </div>
           <div>
@@ -76,6 +79,7 @@ export const ForwardTestTabs: React.FC<ForwardTestTabsProps> = ({
           metrics={metrics}
           currentPrice={currentPrice}
           currentVolume={currentVolume}
+          sessionId={sessionId}
         />
       </TabsContent>
 

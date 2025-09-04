@@ -37,7 +37,7 @@ CREATE TABLE IF NOT EXISTS strategies (
 -- Forward Testing Sessions (user runs strategy in session)
 CREATE TABLE IF NOT EXISTS forward_test_sessions (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    session_id VARCHAR(100) UNIQUE NOT NULL, -- ft_{timestamp} format
+    session_id VARCHAR(100) UNIQUE NOT NULL, -- UUID format
     user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     strategy_id UUID REFERENCES strategies(id) ON DELETE SET NULL, -- Keep historical data if strategy deleted
     name VARCHAR(255) NOT NULL,

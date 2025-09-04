@@ -138,7 +138,7 @@ const SessionDetailView = () => {
       
       // Set up one-time listener for session detail response
       const handleSessionDetailResponse = (data: any) => {
-        if (data.test_id === sessionId) {
+        if (data.session_id === sessionId) {
           globalSocket.off('session_detail_response', handleSessionDetailResponse);
           
           if (data.success && data.session_detail) {
@@ -251,7 +251,7 @@ const SessionDetailView = () => {
       // Request session detail via WebSocket
       globalSocket.emit('forward_test_event', {
         type: 'GET_SESSION_DETAIL',
-        test_id: sessionId
+        session_id: sessionId
       });
       
       // Clear timeout when response is received

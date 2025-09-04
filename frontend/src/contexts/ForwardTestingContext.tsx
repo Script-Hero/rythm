@@ -176,24 +176,28 @@ export const ForwardTestingProvider: React.FC<ForwardTestingProviderProps> = ({ 
           const n = Number(v);
           return Number.isFinite(n) ? n : d;
         };
-        const sessions = response.message.sessions.map((test: any) => ({
-          testId: test.session_id || test.id,
-          name: test.name || `${test.strategyName} Test`,
-          strategyName: test.strategyName,
-          status: test.status,
-          startTime: new Date(test.startTime || test.start_time || Date.now()),
-          isActive: test.status === 'RUNNING' || test.status === 'PAUSED',
-          settings: test.settings || {},
-          symbol: test.symbol || 'BTC/USD',
-          timeframe: test.timeframe || '1m',
-          portfolioValue: toNum(test.portfolioValue ?? test.current_portfolio_value ?? test.initial_balance, 10000),
-          totalTrades: toNum(test.totalTrades ?? test.total_trades, 0),
-          pnlPercent: toNum(test.pnlPercent ?? test.total_return, 0),
-          pnlDollar: toNum(test.pnlDollar ?? test.realized_pnl, 0),
-          maxDrawdown: toNum(test.maxDrawdown ?? test.max_drawdown, 0),
-          winRate: toNum(test.winRate ?? test.win_rate, 0),
-          initialBalance: toNum(test.initialBalance ?? test.initial_balance, -1)
-        }));
+        const sessions = response.message.sessions.map((test: any) => {
+          const strategyName = test.strategy_name || test.strategyName || test.strategy?.name || 'Strategy';
+          const testId = test.session_id || test.sessionId || test.id; // canonical UUID only
+          return {
+            testId,
+            name: test.name || test.session_name || `${strategyName} Test`,
+            strategyName,
+            status: test.status,
+            startTime: new Date(test.start_time || test.startTime || Date.now()),
+            isActive: test.status === 'RUNNING' || test.status === 'PAUSED',
+            settings: test.settings || {},
+            symbol: test.symbol || 'BTC/USD',
+            timeframe: test.timeframe || '1m',
+            portfolioValue: toNum(test.current_portfolio_value ?? test.portfolioValue ?? test.initial_balance, 10000),
+            totalTrades: toNum(test.total_trades ?? test.totalTrades, 0),
+            pnlPercent: toNum(test.total_return ?? test.pnlPercent, 0),
+            pnlDollar: toNum(test.realized_pnl ?? test.pnlDollar, 0),
+            maxDrawdown: toNum(test.max_drawdown ?? test.maxDrawdown, 0),
+            winRate: toNum(test.win_rate ?? test.winRate, 0),
+            initialBalance: toNum(test.initial_balance ?? test.initialBalance, -1)
+          } as ForwardTestSession;
+        });
         console.log('🔄 [ForwardTestingContext] Parsed sessions from server:', sessions);
         
         setSessions(sessions);
@@ -224,6 +228,8 @@ export const ForwardTestingProvider: React.FC<ForwardTestingProviderProps> = ({ 
       event.symbol
     );
     updateChartData(sessionId, 'price', priceData);
+    // Update session's visible currentPrice for header/overview
+    setSessions(prev => prev.map(s => s.testId === sessionId ? { ...s, currentPrice: event.price } : s));
   }, []);
   
   const handleTradeExecuted = useCallback((event: TradeExecutedEvent, sessionId: SessionIdentifier) => {
@@ -261,8 +267,48 @@ export const ForwardTestingProvider: React.FC<ForwardTestingProviderProps> = ({ 
     
     // Play sound notification
     playTradeSound(true); // TODO: Get from session settings
-    
+
     console.log('💰 Trade executed for session:', sessionId, trade);
+
+    // Ensure session exists in list for UI binding
+    setSessions(prev => {
+      if (prev.some(s => s.testId === sessionId)) return prev;
+      const placeholder: ForwardTestSession = {
+        testId: sessionId,
+        name: `Session ${sessionId.slice(0, 8)}`,
+        strategyName: 'Unknown',
+        status: 'RUNNING',
+        startTime: new Date(),
+        isActive: true,
+        settings: {} as any,
+        symbol: (event as any).symbol || 'UNKNOWN',
+        timeframe: '1m',
+        portfolioValue: 0,
+        initialBalance: 0,
+        totalTrades: 1,
+        pnlPercent: 0,
+        pnlDollar: 0,
+        maxDrawdown: 0,
+        winRate: 0,
+        currentPrice: event.price
+      };
+      return [...prev, placeholder];
+    });
+
+    // Increment trade counters in metrics and session list
+    setSessionMetrics(prev => {
+      const existing = prev[sessionId];
+      const updated: Metrics = {
+        totalReturn: existing?.totalReturn ?? 0,
+        sharpeRatio: existing?.sharpeRatio ?? 0,
+        maxDrawdown: existing?.maxDrawdown ?? 0,
+        winRate: existing?.winRate ?? 0,
+        totalTrades: (existing?.totalTrades ?? 0) + 1,
+        currentDrawdown: existing?.currentDrawdown ?? 0
+      };
+      return { ...prev, [sessionId]: updated };
+    });
+    setSessions(prev => prev.map(s => s.testId === sessionId ? { ...s, totalTrades: (s.totalTrades ?? 0) + 1 } : s));
   }, []);
   
   const handlePortfolioUpdate = useCallback((event: PortfolioUpdateEvent, sessionId: SessionIdentifier) => {
@@ -306,6 +352,12 @@ export const ForwardTestingProvider: React.FC<ForwardTestingProviderProps> = ({ 
       metrics.return_percentage
     );
     updateChartData(sessionId, 'portfolio', portfolioData);
+
+    // Append drawdown data point if available
+    const dd = typeof updatedMetrics.currentDrawdown === 'number' ? updatedMetrics.currentDrawdown : (typeof updatedMetrics.maxDrawdown === 'number' ? updatedMetrics.maxDrawdown : undefined);
+    if (typeof dd === 'number') {
+      updateChartData(sessionId, 'drawdown', { time: new Date().toISOString(), sessionId, drawdown: dd });
+    }
     
     // Update session objects
     const updateSessionInList = (sessions: ForwardTestSession[]) => 
@@ -326,6 +378,30 @@ export const ForwardTestingProvider: React.FC<ForwardTestingProviderProps> = ({ 
     //setRecentSessions(prev => updateSessionInList(prev));
     setSessions(prev => updateSessionInList(prev));
     console.log('💼 Portfolio updated for session:', sessionId, updatedPortfolio, updatedMetrics);
+
+    // If session isn’t present yet (e.g. page opened mid-run), insert a placeholder so UI can bind
+    setSessions(prev => {
+      if (prev.some(s => s.testId === sessionId)) return prev;
+      const placeholder: ForwardTestSession = {
+        testId: sessionId,
+        name: `Session ${sessionId.slice(0, 8)}`,
+        strategyName: 'Unknown',
+        status: 'RUNNING',
+        startTime: new Date(),
+        isActive: true,
+        settings: {} as any,
+        symbol: 'UNKNOWN',
+        timeframe: '1m',
+        portfolioValue: updatedPortfolio.totalValue || 0,
+        initialBalance: updatedPortfolio.totalValue || 0,
+        totalTrades: updatedMetrics.totalTrades || 0,
+        pnlPercent: updatedMetrics.totalReturn || 0,
+        pnlDollar: 0,
+        maxDrawdown: updatedMetrics.maxDrawdown || 0,
+        winRate: updatedMetrics.winRate || 0,
+      };
+      return [...prev, placeholder];
+    });
   }, []);
   
   const handleMetricsUpdate = useCallback((event: any, sessionId: SessionIdentifier) => {
@@ -374,8 +450,10 @@ export const ForwardTestingProvider: React.FC<ForwardTestingProviderProps> = ({ 
 
   // Bridge Notification Service messages into existing handlers (register once)
   useEffect(() => {
+    const getSessionId = (msg: any): string | undefined => (msg?.session_id || msg?.data?.session_id) as string | undefined;
+
     const onPortfolioUpdate = (msg: any) => {
-      const sessionId = (msg && (msg.session_id || msg.data?.session_id)) as string;
+      const sessionId = getSessionId(msg);
       if (!sessionId) return;
       const portfolio = msg.portfolio || msg.data?.portfolio || {};
       const metrics = msg.metrics || msg.data?.metrics || {};
@@ -397,7 +475,7 @@ export const ForwardTestingProvider: React.FC<ForwardTestingProviderProps> = ({ 
     };
 
     const onTradeExecution = (msg: any) => {
-      const sessionId = (msg && (msg.session_id || msg.data?.session_id)) as string;
+      const sessionId = getSessionId(msg);
       if (!sessionId) return;
       const t = msg.trade || msg.data?.trade || {};
       handleTradeExecuted({
@@ -414,8 +492,92 @@ export const ForwardTestingProvider: React.FC<ForwardTestingProviderProps> = ({ 
       } as any, sessionId);
     };
 
+    const onRealtimeUpdate = (msg: any) => {
+      const sessionId = getSessionId(msg);
+      if (!sessionId) return;
+      const et = (msg.update_type || msg.data?.update_type || msg.event_type || msg.data?.event_type || '').toString().toUpperCase();
+
+      // PRICE_UPDATE → update price/time series
+      if (et === 'PRICE_UPDATE') {
+        const d = msg.data || msg;
+        const price = Number(d.price ?? d.data?.price ?? 0);
+        const volume = Number(d.volume ?? d.data?.volume ?? 0);
+        const symbol = d.symbol ?? d.data?.symbol;
+        if (price > 0) {
+          handlePriceUpdate({ type: 'PRICE_UPDATE', price, volume, symbol } as any, sessionId);
+        }
+        return;
+      }
+
+      // CHART_DATA_UPDATE → hydrate both price and portfolio series
+      if (et === 'CHART_DATA_UPDATE') {
+        const cp = msg.data?.chart_point;
+        if (!cp) return;
+        const ts = typeof cp.timestamp === 'number' ? new Date(cp.timestamp * 1000).toISOString() : (cp.timestamp || new Date().toISOString());
+        // Price timeline
+        updateChartData(sessionId, 'price', {
+          time: ts,
+          sessionId,
+          price: Number(cp.price || 0),
+          volume: Number(cp.volume || 0)
+        });
+        // Portfolio timeline
+        updateChartData(sessionId, 'portfolio', {
+          time: ts,
+          sessionId,
+          value: Number(cp.portfolio_value || 0),
+          cash: Number(cp.cash_balance || 0),
+          return: Number(cp.pnl_percent || 0)
+        });
+        // Drawdown (if sent later we can wire; for now update metrics + session values)
+        // Update portfolio + metrics state for consistent UI numbers
+        const newValue = Number(cp.portfolio_value || 0);
+        const newReturn = Number(cp.pnl_percent || 0);
+        if (Number.isFinite(newValue) || Number.isFinite(newReturn)) {
+          if (Number.isFinite(newValue)) {
+            setSessionPortfolios(prev => ({
+              ...prev,
+              [sessionId]: {
+                ...(prev[sessionId] || { cash: 0, positions: [], totalValue: 0, unrealizedPnL: 0, realizedPnL: 0 }),
+                totalValue: newValue,
+                cash: Number(cp.cash_balance || (prev[sessionId]?.cash ?? 0))
+              }
+            }));
+            setSessions(prev => prev.map(s => s.testId === sessionId ? { ...s, portfolioValue: newValue } : s));
+          }
+          if (Number.isFinite(newReturn)) {
+            setSessionMetrics(prev => ({
+              ...prev,
+              [sessionId]: {
+                ...(prev[sessionId] || { totalReturn: 0, sharpeRatio: 0, maxDrawdown: 0, winRate: 0, totalTrades: 0, currentDrawdown: 0 }),
+                totalReturn: newReturn
+              }
+            }));
+            setSessions(prev => prev.map(s => s.testId === sessionId ? { ...s, pnlPercent: newReturn } : s));
+          }
+        }
+        // Also reflect current price in session header
+        if (cp.price) {
+          setSessions(prev => prev.map(s => s.testId === sessionId ? { ...s, currentPrice: Number(cp.price) } : s));
+        }
+        return;
+      }
+
+      // CHART_DATA_RESTORED → hydrate historical series
+      if (et === 'CHART_DATA_RESTORED') {
+        const chart = msg.data?.chart_data || msg.data?.chart || {};
+        const trades = msg.data?.trades || [];
+        handleChartDataRestored({
+          type: 'CHART_DATA_RESTORED',
+          chart_data: chart,
+          trades
+        } as any, sessionId);
+        return;
+      }
+    };
+
     const onForwardTestEvent = (msg: any) => {
-      const sessionId = (msg && (msg.session_id || msg.data?.session_id)) as string;
+      const sessionId = getSessionId(msg);
       const eventType = msg.event_type || msg.data?.event_type;
       if (!sessionId || !eventType) return;
       setSessions(prev => prev.map(s => {
@@ -440,11 +602,17 @@ export const ForwardTestingProvider: React.FC<ForwardTestingProviderProps> = ({ 
     webSocket.addMessageHandler(MESSAGE_TYPES.PORTFOLIO_UPDATE, onPortfolioUpdate as any);
     webSocket.addMessageHandler(MESSAGE_TYPES.TRADE_EXECUTION, onTradeExecution as any);
     webSocket.addMessageHandler(MESSAGE_TYPES.FORWARD_TEST_EVENT, onForwardTestEvent as any);
+    webSocket.addMessageHandler(MESSAGE_TYPES.REALTIME_UPDATE, onRealtimeUpdate as any);
+    // Optional: register a no-op strategy signal handler to avoid console noise
+    const noop = () => {};
+    webSocket.addMessageHandler(MESSAGE_TYPES.STRATEGY_SIGNAL, noop as any);
 
     return () => {
       webSocket.removeMessageHandler(MESSAGE_TYPES.PORTFOLIO_UPDATE, onPortfolioUpdate as any);
       webSocket.removeMessageHandler(MESSAGE_TYPES.TRADE_EXECUTION, onTradeExecution as any);
       webSocket.removeMessageHandler(MESSAGE_TYPES.FORWARD_TEST_EVENT, onForwardTestEvent as any);
+      webSocket.removeMessageHandler(MESSAGE_TYPES.REALTIME_UPDATE, onRealtimeUpdate as any);
+      webSocket.removeMessageHandler(MESSAGE_TYPES.STRATEGY_SIGNAL, noop as any);
     };
   }, [webSocket, handlePortfolioUpdate, handleTradeExecuted]);
 
@@ -512,6 +680,8 @@ export const ForwardTestingProvider: React.FC<ForwardTestingProviderProps> = ({ 
       };
     });
   }, []);
+
+  // No aliasing required anymore; the system is unified on UUID session IDs
 
   const clearChartData = useCallback((sessionId: string) => {
     console.log(`🧹 Clearing chart data for session ${sessionId}`);
@@ -804,7 +974,7 @@ export const ForwardTestingProvider: React.FC<ForwardTestingProviderProps> = ({ 
       if (socket) {
         socket.emit('forward_test_event', {
           type: 'START_FORWARD_TEST', // Resume by starting again
-          test_id: sessionId,
+          session_id: sessionId,
         });
       }
       

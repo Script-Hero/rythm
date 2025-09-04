@@ -26,12 +26,13 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { useNavigate } from 'react-router-dom';
-import { apiService, type ForwardTestSession, type PortfolioSummary, type SessionMetrics } from '@/services/api';
+import { apiService } from '@/services/api';
+import type { ForwardTestSession, Portfolio, Metrics } from '@/types/forward-testing';
 import { useWebSocket, useRealtimeData, MESSAGE_TYPES } from '@/hooks/useWebSocket';
 
 interface SessionWithRealtimeData extends ForwardTestSession {
-  portfolio?: PortfolioSummary;
-  metrics?: SessionMetrics;
+  portfolio?: Portfolio;
+  metrics?: Metrics;
   lastUpdate?: number;
 }
 
@@ -51,7 +52,7 @@ export default function RealtimeForwardTestingManager() {
       // Subscribe to all active sessions
       sessions.forEach(session => {
         if (session.status === 'RUNNING' || session.status === 'PAUSED') {
-          webSocket.subscribeToSession(session.id);
+          webSocket.subscribeToSession(session.testId);
         }
       });
     },
@@ -68,7 +69,7 @@ export default function RealtimeForwardTestingManager() {
   const handlePortfolioUpdate = useCallback((message: any) => {
     console.log('💰 ForwardTestingManager: Portfolio update', message);
     setSessions(prev => prev.map(session => {
-      if (session.id === message.session_id) {
+      if (session.testId === message.session_id) {
         return {
           ...session,
           portfolio: message.data.portfolio,
@@ -84,7 +85,7 @@ export default function RealtimeForwardTestingManager() {
   const handleTradeExecution = useCallback((message: any) => {
     console.log('📈 ForwardTestingManager: Trade execution', message);
     setSessions(prev => prev.map(session => {
-      if (session.id === message.session_id) {
+      if (session.testId === message.session_id) {
         return {
           ...session,
           lastUpdate: message.timestamp
@@ -112,8 +113,8 @@ export default function RealtimeForwardTestingManager() {
     switch (eventType) {
       case 'SESSION_STARTED':
         setSessions(prev => prev.map(session => 
-          session.id === sessionId 
-            ? { ...session, status: 'RUNNING', started_at: Date.now() }
+          session.testId === sessionId 
+            ? { ...session, status: 'RUNNING' }
             : session
         ));
         toast.success('Session Started');
@@ -121,8 +122,8 @@ export default function RealtimeForwardTestingManager() {
         
       case 'SESSION_STOPPED':
         setSessions(prev => prev.map(session => 
-          session.id === sessionId 
-            ? { ...session, status: 'STOPPED', stopped_at: Date.now() }
+          session.testId === sessionId 
+            ? { ...session, status: 'STOPPED' }
             : session
         ));
         toast.info('Session Stopped');
@@ -130,7 +131,7 @@ export default function RealtimeForwardTestingManager() {
         
       case 'SESSION_ERROR':
         setSessions(prev => prev.map(session => 
-          session.id === sessionId 
+          session.testId === sessionId 
             ? { ...session, status: 'ERROR' }
             : session
         ));
@@ -158,25 +159,45 @@ export default function RealtimeForwardTestingManager() {
     try {
       const response = await apiService.getUserSessions();
       if (response.success && response.sessions) {
+        // Transform backend session format to frontend format
+        const transformedSessions = response.sessions.map((backendSession: any) => ({
+          testId: backendSession.session_id || backendSession.id,
+          name: backendSession.name || backendSession.session_name || 'Unnamed Session',
+          strategyName: backendSession.strategy_name || 'Strategy',
+          status: backendSession.status || 'STOPPED',
+          startTime: new Date(backendSession.start_time || backendSession.created_at * 1000),
+          isActive: ['RUNNING', 'PAUSED'].includes(backendSession.status),
+          settings: backendSession.settings || {},
+          symbol: backendSession.symbol || 'BTC/USD',
+          timeframe: backendSession.timeframe || '1m',
+          portfolioValue: backendSession.current_portfolio_value || backendSession.initial_balance || 10000,
+          initialBalance: backendSession.initial_balance || 10000,
+          totalTrades: backendSession.total_trades || 0,
+          pnlPercent: backendSession.total_return || 0,
+          pnlDollar: backendSession.realized_pnl || 0,
+          maxDrawdown: backendSession.max_drawdown || 0,
+          winRate: backendSession.win_rate || 0,
+        } as ForwardTestSession));
+        
         // Load initial portfolio data for each session
         const sessionsWithData = await Promise.all(
-          response.sessions.map(async (session: ForwardTestSession) => {
+          transformedSessions.map(async (session: ForwardTestSession) => {
             try {
               // Load portfolio and metrics data
               const [portfolioResponse, metricsResponse] = await Promise.all([
-                apiService.getPortfolioSummary(session.id).catch(() => null),
-                apiService.getSessionMetrics(session.id).catch(() => null)
+                apiService.getPortfolioSummary(session.testId).catch(() => null),
+                apiService.getSessionMetrics(session.testId).catch(() => null)
               ]);
 
               return {
                 ...session,
                 portfolio: portfolioResponse?.data,
                 metrics: metricsResponse?.data,
-                current_capital: portfolioResponse?.data?.total_value || session.initial_capital,
+                current_capital: portfolioResponse?.data?.total_value || session.initialBalance,
                 lastUpdate: Date.now()
               };
             } catch (err) {
-              console.warn(`Failed to load data for session ${session.id}:`, err);
+              console.warn(`Failed to load data for session ${session.testId}:`, err);
               return session;
             }
           })
@@ -188,7 +209,7 @@ export default function RealtimeForwardTestingManager() {
         if (webSocket.connected) {
           sessionsWithData.forEach(session => {
             if (session.status === 'RUNNING' || session.status === 'PAUSED') {
-              webSocket.subscribeToSession(session.id);
+              webSocket.subscribeToSession(session.testId);
             }
           });
         }
@@ -281,7 +302,7 @@ export default function RealtimeForwardTestingManager() {
             <div>
               <CardTitle className="text-lg">{session.name || 'Unnamed Session'}</CardTitle>
               <CardDescription>
-                {session.symbol} • Created {new Date(session.created_at * 1000).toLocaleDateString()}
+                {session.symbol} • Created {session.startTime.toLocaleDateString()}
               </CardDescription>
             </div>
             <Badge variant={
@@ -300,7 +321,7 @@ export default function RealtimeForwardTestingManager() {
             <div>
               <div className="text-sm text-muted-foreground">Portfolio Value</div>
               <div className="text-lg font-bold">
-                ${(portfolio?.total_value || session.initial_capital || 0).toLocaleString()}
+                ${(portfolio?.total_value || session.initialBalance || 0).toLocaleString()}
               </div>
             </div>
             <div>
@@ -350,7 +371,7 @@ export default function RealtimeForwardTestingManager() {
             <Button
               variant="outline"
               size="sm"
-              onClick={() => navigate(`/forward-testing/session/${session.id}`)}
+              onClick={() => navigate(`/forward-testing/session/${session.testId}`)}
             >
               <Eye className="h-4 w-4 mr-1" />
               View
@@ -360,7 +381,7 @@ export default function RealtimeForwardTestingManager() {
               <Button
                 variant="outline"
                 size="sm"
-                onClick={() => handleSessionAction(session.id, 'pause')}
+                onClick={() => handleSessionAction(session.testId, 'pause')}
               >
                 <Pause className="h-4 w-4 mr-1" />
                 Pause
@@ -369,7 +390,7 @@ export default function RealtimeForwardTestingManager() {
               <Button
                 variant="outline"
                 size="sm"
-                onClick={() => handleSessionAction(session.id, 'start')}
+                onClick={() => handleSessionAction(session.testId, 'start')}
               >
                 <Play className="h-4 w-4 mr-1" />
                 Resume
@@ -378,7 +399,7 @@ export default function RealtimeForwardTestingManager() {
               <Button
                 variant="outline"
                 size="sm"
-                onClick={() => handleSessionAction(session.id, 'start')}
+                onClick={() => handleSessionAction(session.testId, 'start')}
                 disabled={session.status === 'ERROR'}
               >
                 <Play className="h-4 w-4 mr-1" />
@@ -389,7 +410,7 @@ export default function RealtimeForwardTestingManager() {
             <Button
               variant="outline"
               size="sm"
-              onClick={() => handleSessionAction(session.id, 'stop')}
+              onClick={() => handleSessionAction(session.testId, 'stop'))
               disabled={session.status === 'STOPPED'}
             >
               <Square className="h-4 w-4 mr-1" />
@@ -399,7 +420,7 @@ export default function RealtimeForwardTestingManager() {
             <Button
               variant="destructive"
               size="sm"
-              onClick={() => handleSessionAction(session.id, 'delete')}
+              onClick={() => handleSessionAction(session.testId, 'delete'))
             >
               <Trash2 className="h-4 w-4" />
             </Button>
@@ -535,7 +556,7 @@ export default function RealtimeForwardTestingManager() {
       ) : (
         <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6">
           {filteredSessions.map((session) => (
-            <SessionCard key={session.id} session={session} />
+            <SessionCard key={session.testId} session={session} />
           ))}
         </div>
       )}

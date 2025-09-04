@@ -37,8 +37,9 @@ class ConnectionManager:
         # Active connections: user_id -> List[UserSession] (multiple connections per user)
         self.active_connections: Dict[UUID, List[UserSession]] = {}
         
-        # Session subscriptions: session_id -> Set[user_id]
+        # Session subscriptions (internal UUID)
         self.session_subscriptions: Dict[UUID, Set[UUID]] = {}
+        # Removed: External session subscriptions no longer needed (unified to UUID)
         
         # Redis client for connection state persistence
         self.redis_client: Optional[redis.Redis] = None
@@ -191,6 +192,7 @@ class ConnectionManager:
                 delivered_count += 1
         
         return delivered_count
+
     
     async def broadcast(self, message: Dict[str, Any]) -> int:
         """Broadcast message to all connected users."""
@@ -226,6 +228,7 @@ class ConnectionManager:
         except Exception as e:
             logger.error("Failed to subscribe user to session", 
                         user_id=str(user_id), session_id=str(session_id), error=str(e))
+
     
     async def unsubscribe_from_session(self, user_id: UUID, session_id: UUID):
         """Unsubscribe user from session updates."""
@@ -252,6 +255,7 @@ class ConnectionManager:
         except Exception as e:
             logger.error("Failed to unsubscribe user from session", 
                         user_id=str(user_id), session_id=str(session_id), error=str(e))
+
     
     async def cleanup_stale_connections(self):
         """Clean up stale WebSocket connections."""

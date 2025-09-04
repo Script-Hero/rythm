@@ -262,12 +262,13 @@ export const createDrawdownDataPoint = (
 // WEBSOCKET EVENT UTILITIES
 // ================================
 
-export const extractSessionId = (event: { session_id?: string; test_id?: string }): string | null => {
-  return event.session_id || event.test_id || null;
+export const extractSessionId = (event: { session_id?: string }): string | null => {
+  // Unified on canonical session UUID only
+  return event.session_id || null;
 };
 
 export const isEventForSession = (
-  event: { session_id?: string; test_id?: string },
+  event: { session_id?: string },
   targetSessionId: SessionIdentifier
 ): boolean => {
   const eventSessionId = extractSessionId(event);

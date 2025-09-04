@@ -125,7 +125,6 @@ export interface ChartData {
 export interface WebSocketEvent {
   type: string;
   session_id?: string; // Session identifier
-  test_id?: string; // Alternative session identifier
   timestamp?: number | string;
 }
 

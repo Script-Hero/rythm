@@ -249,7 +249,8 @@ export function useRealtimeData(options: UseRealtimeDataOptions = {}) {
 
   // Handle portfolio updates
   const handlePortfolioUpdate = useCallback((message: WebSocketMessage) => {
-    if (message.session_id === sessionId) {
+    const msgSessionId = message.session_id as any;
+    if (msgSessionId === sessionId) {
       console.log('💰 useRealtimeData: Portfolio update received', message.data);
       setData(prev => ({
         ...prev,
@@ -261,11 +262,15 @@ export function useRealtimeData(options: UseRealtimeDataOptions = {}) {
 
   // Handle trade executions
   const handleTradeExecution = useCallback((message: WebSocketMessage) => {
-    if (message.session_id === sessionId) {
+    const msgSessionId = message.session_id as any;
+    if (msgSessionId === sessionId) {
       console.log('📈 useRealtimeData: Trade execution received', message.data);
+      // Normalize trade shape (support action->side)
+      const incoming = message.data?.trade || {};
+      const normalizedTrade = { ...incoming, side: incoming.side || incoming.action };
       setData(prev => ({
         ...prev,
-        trades: [message.data.trade, ...prev.trades.slice(0, 99)], // Keep last 100 trades
+        trades: [normalizedTrade, ...prev.trades.slice(0, 99)], // Keep last 100 trades
         lastUpdate: message.timestamp || Date.now()
       }));
     }
@@ -273,7 +278,8 @@ export function useRealtimeData(options: UseRealtimeDataOptions = {}) {
 
   // Handle strategy signals
   const handleStrategySignal = useCallback((message: WebSocketMessage) => {
-    if (message.session_id === sessionId) {
+    const msgSessionId = message.session_id as any;
+    if (msgSessionId === sessionId) {
       console.log('🎯 useRealtimeData: Strategy signal received', message.data);
       // Could trigger UI notifications or charts updates
     }
@@ -281,7 +287,8 @@ export function useRealtimeData(options: UseRealtimeDataOptions = {}) {
 
   // Handle real-time updates (price data, metrics)
   const handleRealtimeUpdate = useCallback((message: WebSocketMessage) => {
-    if (message.session_id === sessionId) {
+    const msgSessionId = message.session_id as any;
+    if (msgSessionId === sessionId) {
       console.log('📊 useRealtimeData: Realtime update received', message.data);
       
       if (message.data.update_type === 'price_update') {

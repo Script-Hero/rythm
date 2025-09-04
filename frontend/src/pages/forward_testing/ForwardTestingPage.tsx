@@ -39,7 +39,8 @@ const ForwardTestingPage = () => {
     getSessionMetrics,
     getSessionTrades,
     getSessionAlerts,
-    addSessionAlert
+    addSessionAlert,
+    sessionChartData
   } = useForwardTesting();
 
   // Single session ID state - the page focuses on one session at a time
@@ -90,7 +91,23 @@ const ForwardTestingPage = () => {
   // Derived UI state
   const isRunning = currentSession?.status === 'RUNNING';
   const isPaused = currentSession?.status === 'PAUSED';
-  const currentPrice = currentSession?.currentPrice || 0;
+  const currentPrice = useMemo(() => {
+    if (currentSessionId) {
+      const sd = sessionChartData[currentSessionId];
+      const last = sd?.priceHistory?.[sd.priceHistory.length - 1]?.price;
+      if (typeof last === 'number' && isFinite(last)) return last;
+    }
+    return currentSession?.currentPrice || 0;
+  }, [currentSessionId, sessionChartData, currentSession?.currentPrice]);
+
+  const currentVolume = useMemo(() => {
+    if (currentSessionId) {
+      const sd = sessionChartData[currentSessionId];
+      const last = sd?.priceHistory?.[sd.priceHistory.length - 1]?.volume;
+      if (typeof last === 'number' && isFinite(last)) return last;
+    }
+    return 100; // fallback
+  }, [currentSessionId, sessionChartData]);
   const currentVolume = 100; // TODO: Get from real-time data
 
   // Simplified alert handler that uses context
@@ -129,6 +146,23 @@ const ForwardTestingPage = () => {
     // Context automatically handles historical data loading
     // No need for page-level data management
   }, [currentSessionId]);
+
+  // If a session is already active in context and none selected yet, default to it
+  useEffect(() => {
+    if (!currentSessionId && activeSession?.testId) {
+      setCurrentSessionId(activeSession.testId);
+    }
+  }, [currentSessionId, activeSession?.testId]);
+
+  // Fallback: if we have chart data for sessions but none selected, pick the most recent key
+  useEffect(() => {
+    if (!currentSessionId) {
+      const ids = Object.keys(sessionChartData || {});
+      if (ids.length > 0) {
+        setCurrentSessionId(ids[ids.length - 1]);
+      }
+    }
+  }, [currentSessionId, sessionChartData]);
 
   // Strategy selection handlers
   const handleStrategySelect = async (strategy: Strategy) => {
@@ -266,6 +300,7 @@ const ForwardTestingPage = () => {
         alerts={alerts}
         currentPrice={currentPrice}
         currentVolume={currentVolume}
+        sessionId={currentSessionId || undefined}
         settings={settings}
         isRunning={isRunning}
         onSettingsChange={handleSettingsChange}

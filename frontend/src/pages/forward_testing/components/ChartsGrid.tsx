@@ -71,22 +71,22 @@ export const ChartsGrid = ({ trades, portfolio, metrics, currentPrice, currentVo
     }
   }, [portfolioHistory]);
   
-  // Update price history when currentPrice changes - smooth continuous line
+  // Price updates primarily come from WebSocket via context.
+  // As a fallback, if no price history exists yet, seed an initial point from currentPrice.
   useEffect(() => {
-    if (currentPrice > 0 && currentPrice !== lastPriceRef.current) {
+    if (!sessionId) return;
+    const hasHistory = (priceHistory?.length || 0) > 0;
+    if (!hasHistory && currentPrice > 0) {
       const now = new Date();
       const newEntry = {
         time: now.toISOString(),
         price: currentPrice,
-        volume: currentVolume || 100, // Use real volume data from WebSocket
+        volume: currentVolume || 100,
       };
-      
-      if (sessionId) {
-        updateChartData(sessionId, 'price', newEntry);
-      }
+      updateChartData(sessionId, 'price', newEntry);
       lastPriceRef.current = currentPrice;
     }
-  }, [currentPrice, currentVolume, sessionId, updateChartData]);
+  }, [currentPrice, currentVolume, sessionId, updateChartData, priceHistory]);
   
   // Portfolio and drawdown data now comes from backend WebSocket events
   // Client-side calculations removed - data flows through portfolio_data/drawdown_data events

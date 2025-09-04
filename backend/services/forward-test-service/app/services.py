@@ -76,8 +76,8 @@ class DatabaseService:
     ) -> Tuple[ForwardTestSessionResponse, str]:
         """Create a new forward testing session (aligned to DB schema)."""
         row_id = uuid4()
-        # External string session identifier for cross-service linking
-        session_id_str = f"ft_{int(datetime.utcnow().timestamp() * 1000)}"
+        # Use UUID directly as session identifier for consistency
+        session_id_str = str(row_id)
         now = datetime.utcnow()
 
         # Derive values expected by schema

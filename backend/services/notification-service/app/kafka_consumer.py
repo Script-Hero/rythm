@@ -201,9 +201,11 @@ class NotificationKafkaConsumer:
             notification = {
                 "type": "portfolio_update",
                 "session_id": session_id,
+                "test_id": data.get("external_session_id") or data.get("test_id"),
                 "data": {
                     "portfolio": portfolio_data,
                     "session_id": session_id,
+                    "test_id": data.get("external_session_id") or data.get("test_id"),
                     "user_id": user_id,
                     "timestamp": data.get("timestamp", time.time())
                 },
@@ -222,6 +224,14 @@ class NotificationKafkaConsumer:
             # Also send to specific user if provided
             if user_id:
                 await self.connection_manager.send_to_user(UUID(user_id), notification)
+
+            # Fan-out to session subscribers using UUID
+            if session_id:
+                try:
+                    session_uuid = UUID(session_id)
+                    await self.connection_manager.send_to_session(session_uuid, notification)
+                except ValueError:
+                    logger.warning("Invalid session_id format for notification", session_id=session_id)
             
             logger.info("Processed portfolio update", 
                         session_id=session_id,
@@ -246,9 +256,11 @@ class NotificationKafkaConsumer:
             notification = {
                 "type": "trade_execution",
                 "session_id": session_id,
+                "test_id": data.get("external_session_id") or data.get("test_id"),
                 "data": {
                     "trade": trade_data,
                     "session_id": session_id,
+                    "test_id": data.get("external_session_id") or data.get("test_id"),
                     "user_id": user_id,
                     "timestamp": data.get("timestamp", time.time())
                 },
@@ -267,6 +279,14 @@ class NotificationKafkaConsumer:
             # Also send to specific user if provided
             if user_id:
                 await self.connection_manager.send_to_user(UUID(user_id), notification)
+
+            # Fan-out to session subscribers using UUID
+            if session_id:
+                try:
+                    session_uuid = UUID(session_id)
+                    await self.connection_manager.send_to_session(session_uuid, notification)
+                except ValueError:
+                    logger.warning("Invalid session_id format for notification", session_id=session_id)
             
             logger.info("Processed trade execution", 
                         trade_id=trade_data.get("trade_id"),
@@ -293,6 +313,7 @@ class NotificationKafkaConsumer:
             notification = {
                 "type": "strategy_signal",
                 "session_id": session_id,
+                "test_id": data.get("external_session_id") or data.get("test_id"),
                 "signal": signal,
                 "symbol": data.get("symbol"),
                 "action": signal.get("action"),

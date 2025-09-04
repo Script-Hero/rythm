@@ -8,6 +8,7 @@ import json
 from typing import Dict, Any, Optional
 from datetime import datetime
 from decimal import Decimal
+from uuid import UUID
 
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -168,8 +169,8 @@ class AnalyticsKafkaProcessor:
         }
         """
         try:
-            # Prefer external (ft_*) for DB lookups, fallback to resolving UUID
-            session_id = message.get("external_session_id") or message.get("session_id")
+            # Use session_id directly as UUID
+            session_id = message.get("session_id")
             if not session_id:
                 logger.warning("Trade execution missing session_id", message=message)
                 return
@@ -177,28 +178,21 @@ class AnalyticsKafkaProcessor:
             logger.info("Processing trade execution", session_id=session_id, trade_id=message.get("trade_id"))
             
             async with get_db_session() as db:
-                # If we received UUID, resolve to external string for DB operations
-                if session_id and not str(session_id).startswith("ft_"):
-                    try:
-                        from sqlalchemy import select
-                        from .models import ForwardTestSession
-                        result = await db.execute(
-                            select(ForwardTestSession.session_id).where(ForwardTestSession.id == session_id)
-                        )
-                        resolved = result.scalar_one_or_none()
-                        if resolved:
-                            session_id = resolved
-                    except Exception as e:
-                        logger.warning("Failed to resolve UUID session_id to external id", error=str(e))
-                # Update session trade count and metrics
-                await self._update_session_trade_metrics(db, session_id, message)
+                # Convert session_id to UUID for database operations
+                try:
+                    session_uuid = UUID(session_id) if isinstance(session_id, str) else session_id
+                except ValueError:
+                    logger.warning("Invalid session_id format", session_id=session_id)
+                    return
+                # Update session trade count and metrics (convert UUID to string for VARCHAR column)
+                await self._update_session_trade_metrics(db, str(session_uuid), message)
                 
                 # Recalculate live analytics for this session
-                analytics = await self.analytics_engine.calculate_live_analytics(db, session_id)
+                analytics = await self.analytics_engine.calculate_live_analytics(db, str(session_uuid))
                 
                 # Cache updated analytics
                 if analytics:
-                    await self.cache_manager.set_live_analytics(session_id, analytics)
+                    await self.cache_manager.set_live_analytics(str(session_uuid), analytics)
                     logger.info("Updated live analytics for trade", session_id=session_id)
         
         except Exception as e:
@@ -225,7 +219,7 @@ class AnalyticsKafkaProcessor:
         }
         """
         try:
-            session_id = message.get("external_session_id") or message.get("session_id")
+            session_id = message.get("session_id")
             if not session_id:
                 logger.warning("Portfolio update missing session_id", message=message)
                 return
@@ -233,28 +227,22 @@ class AnalyticsKafkaProcessor:
             logger.debug("Processing portfolio update", session_id=session_id)
             
             async with get_db_session() as db:
-                # Resolve UUID to external session id if necessary
-                if session_id and not str(session_id).startswith("ft_"):
-                    try:
-                        from sqlalchemy import select
-                        from .models import ForwardTestSession
-                        result = await db.execute(
-                            select(ForwardTestSession.session_id).where(ForwardTestSession.id == session_id)
-                        )
-                        resolved = result.scalar_one_or_none()
-                        if resolved:
-                            session_id = resolved
-                    except Exception as e:
-                        logger.warning("Failed to resolve UUID session_id to external id", error=str(e))
-                # Store portfolio value for drawdown calculations
-                await self._store_portfolio_value(db, session_id, message)
+                # Convert session_id to UUID for database operations
+                try:
+                    session_uuid = UUID(session_id) if isinstance(session_id, str) else session_id
+                except ValueError:
+                    logger.warning("Invalid session_id format", session_id=session_id)
+                    return
+                    
+                # Store portfolio value for drawdown calculations (convert UUID to string for VARCHAR column)
+                await self._store_portfolio_value(db, str(session_uuid), message)
                 
                 # Recalculate live analytics
-                analytics = await self.analytics_engine.calculate_live_analytics(db, session_id)
+                analytics = await self.analytics_engine.calculate_live_analytics(db, str(session_uuid))
                 
                 # Cache updated analytics
                 if analytics:
-                    await self.cache_manager.set_live_analytics(session_id, analytics)
+                    await self.cache_manager.set_live_analytics(str(session_uuid), analytics)
         
         except Exception as e:
             logger.error("Failed to process portfolio update", error=str(e), message=message)
