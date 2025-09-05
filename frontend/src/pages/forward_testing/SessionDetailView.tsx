@@ -69,11 +69,14 @@ const SessionDetailView = () => {
   const navigate = useNavigate();
   const { 
     sessions,
+    sessionChartData,
+    sessionTrades,
+    sessionMetrics,
+    sessionPortfolios,
     startTest, 
     pauseTest, 
     resumeTest, 
     stopTest,
-    socket: globalSocket,
     updateChartData,
     getSessionPortfolio,
     getSessionMetrics,
@@ -130,166 +133,92 @@ const SessionDetailView = () => {
   }, []);
 
   const loadSessionFromServer = useCallback(async () => {
-    if (!sessionId || !globalSocket) return;
-    
+    if (!sessionId) return;
     try {
       setLoading(true);
       setSessionNotFound(false);
-      
-      // Set up one-time listener for session detail response
-      const handleSessionDetailResponse = (data: any) => {
-        if (data.session_id === sessionId) {
-          globalSocket.off('session_detail_response', handleSessionDetailResponse);
-          
-          if (data.success && data.session_detail) {
-            const detail = data.session_detail;
-            const sessionData = detail.session;
-            const settings = sessionData.settings || {};
-            
-            // Set session data from the comprehensive response
-            setSession({
-              id: sessionData.id || sessionId,
-              name: settings.sessionName || sessionData.name || `${sessionData.strategy?.name || 'Unknown'} Test`,
-              strategyName: sessionData.strategy?.name || 'Unknown Strategy',
-              strategy: sessionData.strategy || { name: 'Unknown Strategy' },
-              status: sessionData.status || 'STOPPED',
-              startTime: new Date(sessionData.start_time || Date.now()),
-              symbol: sessionData.symbol || 'BTC/USD',
-              timeframe: settings.timeframe || '1m',
-              portfolioValue: sessionData.portfolioValue || settings.initialBalance || 10000,
-              totalTrades: (detail.trades || []).length,
-              pnlPercent: 0, // Will be updated from metrics
-              pnlDollar: 0,  // Will be updated from metrics
-              maxDrawdown: 0, // Will be updated from metrics  
-              winRate: 0,    // Will be updated from metrics
-              settings: settings
-            });
+      const res = await apiService.getForwardTestSessionDetail(sessionId);
+      if (res?.success && res?.session_detail?.session) {
+        const detail = res.session_detail;
+        const sessionData = detail.session;
+        const settings = sessionData.settings || {};
 
-            // Set portfolio and metrics data
-            if (detail.portfolio) {
-              setState(prev => ({
-                ...prev,
-                portfolio: {
-                  cash: detail.portfolio.cash || prev.portfolio.cash,
-                  positions: detail.portfolio.positions || [],
-                  totalValue: detail.portfolio.totalValue || prev.portfolio.totalValue,
-                  unrealizedPnL: detail.portfolio.unrealizedPnL || 0,
-                  realizedPnL: detail.portfolio.realizedPnL || 0
-                }
-              }));
-            }
-
-            if (detail.metrics) {
-              setState(prev => ({
-                ...prev,
-                metrics: {
-                  totalReturn: detail.metrics.totalReturn || 0,
-                  sharpeRatio: detail.metrics.sharpeRatio || 0,
-                  maxDrawdown: detail.metrics.maxDrawdown || 0,
-                  winRate: detail.metrics.winRate || 0,
-                  totalTrades: detail.metrics.totalTrades || (detail.trades || []).length,
-                  currentDrawdown: detail.metrics.currentDrawdown || 0
-                }
-              }));
-            }
-
-            // Set trades data
-            if (detail.trades && Array.isArray(detail.trades)) {
-              setState(prev => ({
-                ...prev,
-                trades: detail.trades.map((trade: any) => ({
-                  id: trade.id || `trade_${Date.now()}`,
-                  symbol: trade.symbol || 'UNKNOWN',
-                  side: trade.side as 'BUY' | 'SELL',
-                  quantity: trade.quantity || 0,
-                  price: trade.price || 0,
-                  timestamp: new Date(trade.timestamp || Date.now()),
-                  status: trade.status as 'OPEN' | 'CLOSED',
-                  pnl: trade.pnl || 0
-                }))
-              }));
-            }
-            
-          } else {
-            // Session not found or error
-            console.warn('Session detail not found via WebSocket:', data.error);
-            setSessionNotFound(true);
-            setSession({
-              id: sessionId,
-              name: 'Session Not Found',
-              strategyName: 'Unknown Strategy',
-              strategy: { name: 'Unknown Strategy' },
-              status: 'STOPPED',
-              startTime: new Date(),
-              symbol: 'BTC/USD',
-              timeframe: '1m',
-              portfolioValue: 10000,
-              totalTrades: 0,
-              pnlPercent: 0,
-              pnlDollar: 0,
-              maxDrawdown: 0,
-              winRate: 0,
-              settings: {}
-            });
+        setSession({
+          id: sessionData.id || sessionId,
+          name: sessionData.session_name || sessionData.name || `${sessionData.strategy_name || 'Unknown'} Test`,
+          strategyName: sessionData.strategy_name || 'Unknown Strategy',
+          strategy: { name: sessionData.strategy_name || 'Unknown Strategy' },
+          status: sessionData.status || 'STOPPED',
+          startTime: new Date(sessionData.started_at || sessionData.created_at || Date.now()),
+          symbol: sessionData.symbol || 'BTC/USD',
+          timeframe: sessionData.timeframe || '1m',
+          portfolioValue: parseFloat(sessionData.current_portfolio_value || sessionData.initial_balance || sessionData.current_balance || sessionData.starting_balance || 10000),
+          totalTrades: sessionData.total_trades || 0,
+          pnlPercent: parseFloat(sessionData.total_return || 0),
+          pnlDollar: parseFloat(sessionData.realized_pnl || sessionData.total_pnl || 0),
+          maxDrawdown: parseFloat(sessionData.max_drawdown || 0),
+          winRate: parseFloat(sessionData.win_rate || 0),
+          settings: {
+            initialBalance: parseFloat(sessionData.initial_balance || sessionData.starting_balance || 10000),
+            ...settings
           }
-          
-          setLoading(false);
+        });
+
+        if (detail.portfolio) {
+          setState(prev => ({
+            ...prev,
+            portfolio: {
+              cash: parseFloat(detail.portfolio.cash_balance ?? prev.portfolio.cash),
+              positions: detail.portfolio.positions || [],
+              totalValue: parseFloat(detail.portfolio.total_value ?? prev.portfolio.totalValue),
+              unrealizedPnL: parseFloat(detail.portfolio.unrealized_pnl ?? 0),
+              realizedPnL: parseFloat(detail.portfolio.realized_pnl ?? detail.portfolio.total_pnl ?? 0)
+            }
+          }));
         }
-      };
-      
-      // Add timeout for the WebSocket request
-      const timeout = setTimeout(() => {
-        globalSocket.off('session_detail_response', handleSessionDetailResponse);
-        console.error('WebSocket session detail request timed out');
+
+        const m = detail.metrics || {};
+        setState(prev => ({
+          ...prev,
+          metrics: {
+            totalReturn: parseFloat(m.total_return ?? sessionData.total_return ?? 0),
+            sharpeRatio: parseFloat(m.sharpe_ratio ?? sessionData.sharpe_ratio ?? 0),
+            maxDrawdown: parseFloat(m.max_drawdown ?? sessionData.max_drawdown ?? 0),
+            winRate: parseFloat(m.win_rate ?? sessionData.win_rate ?? 0),
+            totalTrades: m.total_trades ?? sessionData.total_trades ?? 0,
+            currentDrawdown: parseFloat(m.current_drawdown ?? 0)
+          }
+        }));
+
+        if (Array.isArray(detail.trades)) {
+          setState(prev => ({
+            ...prev,
+            trades: detail.trades.map((trade: any) => ({
+              id: trade.id || `trade_${Date.now()}`,
+              symbol: trade.symbol || 'UNKNOWN',
+              side: trade.side as 'BUY' | 'SELL',
+              quantity: trade.quantity || 0,
+              price: trade.price || 0,
+              timestamp: new Date(trade.timestamp || Date.now()),
+              status: (trade.status as 'OPEN' | 'CLOSED') || 'CLOSED',
+              pnl: trade.pnl || 0
+            }))
+          }));
+        }
+
+        setLoading(false);
+      } else {
         setSessionNotFound(true);
         setLoading(false);
-      }, 5000);
-      
-      // Set up listener and send request
-      globalSocket.on('session_detail_response', handleSessionDetailResponse);
-      
-      // Request session detail via WebSocket
-      globalSocket.emit('forward_test_event', {
-        type: 'GET_SESSION_DETAIL',
-        session_id: sessionId
-      });
-      
-      // Clear timeout when response is received
-      globalSocket.on('session_detail_response', () => {
-        clearTimeout(timeout);
-      });
-      
+      }
     } catch (error) {
-      console.error('Error requesting session detail via WebSocket:', error);
+      console.error('Error loading session detail:', error);
       setSessionNotFound(true);
       setLoading(false);
     }
-  }, [sessionId, globalSocket]);
+  }, [sessionId]);
 
-  const handleTradeUpdate = (data: Record<string, unknown>) => {
-    console.log('📡 [SessionDetailView] handleTradeUpdate called with:', data);
-    
-    // Handle individual trade format (backend sends single trade events)
-    const formattedTrade = {
-      id: (data.tradeId as string) || (data.id as string) || `trade_${Date.now()}`,
-      symbol: (data.symbol as string) || 'UNKNOWN',
-      side: data.side as 'BUY' | 'SELL',
-      quantity: (data.quantity as number) || 0,
-      price: (data.price as number) || 0,
-      timestamp: new Date((data.timestamp as string) || Date.now()),
-      status: (data.status as 'OPEN' | 'CLOSED') || 'CLOSED',
-      pnl: (data.pnl as number) || 0
-    };
-    
-    console.log('📡 [SessionDetailView] Formatted trade:', formattedTrade);
-    
-    setState(prev => ({ 
-      ...prev, 
-      trades: [formattedTrade, ...prev.trades].sort((a, b) => 
-        new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
-      )
-    }));
-  };
+  // Removed legacy trade update helper (context manages trades)
 
   // Load session data on mount
   useEffect(() => {
@@ -297,6 +226,49 @@ const SessionDetailView = () => {
       loadSessionFromServer();
     }
   }, [sessionId, loadSessionFromServer]);
+
+  // Derive live data from context stores when they change
+  useEffect(() => {
+    if (!sessionId) return;
+    // Live price/volume from chart data
+    const sd = sessionChartData?.[sessionId];
+    if (sd && sd.priceHistory && sd.priceHistory.length > 0) {
+      const last = sd.priceHistory[sd.priceHistory.length - 1];
+      setState(prev => ({
+        ...prev,
+        currentPrice: typeof last.price === 'number' ? last.price : prev.currentPrice,
+        currentVolume: typeof last.volume === 'number' ? last.volume : prev.currentVolume,
+      }));
+    }
+    // Portfolio/metrics updates from context
+    const p = sessionPortfolios?.[sessionId];
+    const m = sessionMetrics?.[sessionId];
+    if (p || m) {
+      setState(prev => ({
+        ...prev,
+        portfolio: p ? {
+          cash: p.cash,
+          positions: p.positions,
+          totalValue: p.totalValue,
+          unrealizedPnL: p.unrealizedPnL,
+          realizedPnL: p.realizedPnL,
+        } : prev.portfolio,
+        metrics: m ? {
+          totalReturn: m.totalReturn,
+          sharpeRatio: m.sharpeRatio,
+          maxDrawdown: m.maxDrawdown,
+          winRate: m.winRate,
+          totalTrades: m.totalTrades,
+          currentDrawdown: m.currentDrawdown,
+        } : prev.metrics,
+      }));
+    }
+    // Trades list
+    const t = sessionTrades?.[sessionId];
+    if (t) {
+      setState(prev => ({ ...prev, trades: t }));
+    }
+  }, [sessionId, sessionChartData, sessionPortfolios, sessionMetrics, sessionTrades]);
 
   // Initialize portfolio state when session is loaded
   useEffect(() => {
@@ -314,90 +286,7 @@ const SessionDetailView = () => {
     }
   }, [session?.settings?.initialBalance]);
 
-  // Listen to WebSocket events for this specific session
-  useEffect(() => {
-    if (globalSocket && sessionId) {
-      const handleWebSocketMessage = (data: Record<string, unknown>) => {
-        // Only process messages for this session
-        if (data.id !== sessionId && data.session_id !== sessionId) {
-          return;
-        }
-
-        console.log(`📡 [SessionDetail-${sessionId}] WebSocket message:`, data);
-        
-        switch (data.type) {
-          case 'PRICE_UPDATE':
-            setState(prev => ({ 
-              ...prev, 
-              currentPrice: data.price as number,
-              currentVolume: (data.volume as number) || 100  // Store volume for charts
-            }));
-            break;
-          
-          case 'PORTFOLIO_DATA': {
-            // Update chart data directly via context
-            const portfolioPoint = {
-              time: new Date((data.timestamp as number) * 1000).toISOString(),
-              value: data.value as number,
-              return: data.return as number
-            };
-            updateChartData(sessionId, 'portfolio', portfolioPoint);
-            break;
-          }
-          
-          case 'DRAWDOWN_DATA': {
-            // Update chart data directly via context
-            const drawdownPoint = {
-              time: new Date((data.timestamp as number) * 1000).toISOString(),
-              drawdown: data.drawdown as number
-            };
-            updateChartData(sessionId, 'drawdown', drawdownPoint);
-            break;
-          }
-          
-          case 'TRADE_EXECUTED':
-            handleTradeUpdate(data);
-            break;
-
-          case 'PORTFOLIO_UPDATE':
-            setState(prev => ({
-              ...prev,
-              portfolio: { ...prev.portfolio, ...data.portfolio },
-            }));
-            break;
-
-          case 'METRICS_UPDATE':
-            setState(prev => ({
-              ...prev,
-              metrics: { ...prev.metrics, ...data.metrics },
-            }));
-            break;
-
-          case 'ERROR':
-            addAlert('ERROR', data.message as string);
-            break;
-        }
-      };
-
-      globalSocket.on('price_update', handleWebSocketMessage);
-      globalSocket.on('portfolio_data', handleWebSocketMessage);
-      globalSocket.on('drawdown_data', handleWebSocketMessage);
-      globalSocket.on('trade_executed', handleWebSocketMessage);
-      globalSocket.on('portfolio_update', handleWebSocketMessage);
-      globalSocket.on('metrics_update', handleWebSocketMessage);
-      globalSocket.on('forward_test_error', handleWebSocketMessage);
-
-      return () => {
-        globalSocket.off('price_update', handleWebSocketMessage);
-        globalSocket.off('portfolio_data', handleWebSocketMessage);
-        globalSocket.off('drawdown_data', handleWebSocketMessage);
-        globalSocket.off('trade_executed', handleWebSocketMessage);
-        globalSocket.off('portfolio_update', handleWebSocketMessage);
-        globalSocket.off('metrics_update', handleWebSocketMessage);
-        globalSocket.off('forward_test_error', handleWebSocketMessage);
-      };
-    }
-  }, [globalSocket, sessionId, updateChartData, addAlert]);
+  // Removed legacy socket.io listeners; real-time updates come via context
 
   // Sync local session state with context updates and auto-populate from context data
   useEffect(() => {
@@ -447,7 +336,9 @@ const SessionDetailView = () => {
             totalReturn: contextSession.pnlPercent,
             maxDrawdown: contextSession.maxDrawdown,
             winRate: contextSession.winRate,
-            totalTrades: contextSession.totalTrades
+            totalTrades: contextSession.totalTrades,
+            currentDrawdown: prev.metrics.currentDrawdown,
+            sharpeRatio: prev.metrics.sharpeRatio
           },
           trades: contextTrades || prev.trades
         }));
@@ -493,7 +384,9 @@ const SessionDetailView = () => {
             totalReturn: contextSession.pnlPercent,
             maxDrawdown: contextSession.maxDrawdown,
             winRate: contextSession.winRate,
-            totalTrades: contextSession.totalTrades
+            totalTrades: contextSession.totalTrades,
+            currentDrawdown: prev.metrics.currentDrawdown,
+            sharpeRatio: prev.metrics.sharpeRatio
           },
           trades: contextTrades || prev.trades
         }));

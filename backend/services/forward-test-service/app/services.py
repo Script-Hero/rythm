@@ -210,6 +210,17 @@ class DatabaseService:
         def _get_setting(key: str, default=None):
             return settings_obj.get(key, default)
 
+        # Calculate derived metrics
+        total_trades = row.get("trade_count") or 0
+        win_rate_pct = row.get("win_rate") or 0
+        winning_trades = int(total_trades * win_rate_pct / 100) if total_trades > 0 and win_rate_pct > 0 else 0
+        losing_trades = total_trades - winning_trades
+        
+        # Calculate percentage return for frontend compatibility
+        initial_balance = row.get("initial_balance") or Decimal("10000")
+        total_pnl = row.get("total_pnl") or Decimal("0")
+        total_return_pct = (total_pnl / initial_balance * 100) if initial_balance > 0 else Decimal("0")
+
         return ForwardTestSessionResponse(
             id=row["id"],
             session_id=row.get("session_id"),
@@ -221,8 +232,8 @@ class DatabaseService:
             strategy_name=row.get("strategy_name"),
             description=None,
             status=SessionStatus(row["status"]),
-            starting_balance=row.get("initial_balance"),
-            current_balance=row.get("current_balance") or row.get("initial_balance"),
+            starting_balance=initial_balance,
+            current_balance=row.get("current_balance") or initial_balance,
             current_position_size=Decimal("0"),
             max_position_size_percent=_get_setting("max_position_size_percent", 0.25),
             commission_rate=_get_setting("commission_rate", 0.001),
@@ -232,12 +243,16 @@ class DatabaseService:
             started_at=row.get("start_time"),
             stopped_at=row.get("end_time"),
             last_signal_at=None,
-            total_trades=row.get("trade_count") or 0,
-            winning_trades=0,
-            losing_trades=0,
-            total_pnl=row.get("total_pnl") or Decimal("0"),
-            unrealized_pnl=Decimal("0"),
+            total_trades=total_trades,
+            winning_trades=winning_trades,
+            losing_trades=losing_trades,
+            total_pnl=total_pnl,
+            unrealized_pnl=Decimal("0"),  # TODO: Calculate from current positions
+            realized_pnl=total_pnl,  # For now, assume all PnL is realized in paper trading
             max_drawdown=row.get("max_drawdown") or Decimal("0"),
+            win_rate=Decimal(str(win_rate_pct)),
+            sharpe_ratio=row.get("sharpe_ratio") or Decimal("0"),
+            total_return=total_return_pct,
         )
 
     @classmethod
@@ -383,9 +398,161 @@ class DatabaseService:
         trade_data: Dict[str, Any]
     ):
         """Update session metrics after trade execution."""
-        # This would update session balance, position, PnL, etc.
-        # Implementation depends on specific trading logic
-        pass
+        try:
+            # Get current session data
+            session_row = await conn.fetchrow(
+                """
+                SELECT current_balance, total_pnl, trade_count, win_rate, max_drawdown
+                FROM forward_test_sessions WHERE id = $1
+                """,
+                session_id
+            )
+            
+            if not session_row:
+                logger.warning("Session not found for metrics update", session_id=str(session_id))
+                return
+
+            # Calculate PnL from trade (simplified - in practice would consider commissions, slippage)
+            trade_pnl = Decimal("0")
+            if trade_data.get('pnl'):
+                trade_pnl = Decimal(str(trade_data['pnl']))
+            elif trade_data.get('action') == 'SELL' and trade_data.get('quantity') and trade_data.get('price'):
+                # For now, just add a basic PnL calculation - this should be enhanced with proper portfolio tracking
+                trade_pnl = Decimal(str(trade_data['quantity'])) * Decimal(str(trade_data['price'])) * Decimal("0.001")  # Placeholder
+
+            # Update balance and PnL
+            new_balance = (session_row['current_balance'] or Decimal("0")) + trade_pnl
+            new_total_pnl = (session_row['total_pnl'] or Decimal("0")) + trade_pnl
+            new_trade_count = (session_row['trade_count'] or 0) + 1
+
+            # Calculate win rate (simplified - assumes any positive PnL is a win)
+            if new_trade_count > 0:
+                # Get count of profitable trades (this is a simplified calculation)
+                winning_trades_count = await conn.fetchval(
+                    """
+                    SELECT COUNT(*) FROM trades t
+                    JOIN forward_test_sessions s ON t.session_id = s.session_id
+                    WHERE s.id = $1 AND (
+                        (t.action = 'SELL' AND t.total_cost > 0) OR
+                        (t.action = 'BUY' AND t.total_cost < 0)
+                    )
+                    """,
+                    session_id
+                ) or 0
+                new_win_rate = (winning_trades_count / new_trade_count) * 100
+            else:
+                new_win_rate = 0
+
+            # Update max drawdown (simplified calculation)
+            current_drawdown_pct = max(0, (new_total_pnl / new_balance * -100)) if new_balance > 0 else 0
+            new_max_drawdown = max(session_row['max_drawdown'] or 0, current_drawdown_pct)
+
+            # Update session record
+            await conn.execute(
+                """
+                UPDATE forward_test_sessions
+                SET 
+                    current_balance = $1,
+                    total_pnl = $2, 
+                    trade_count = $3,
+                    win_rate = $4,
+                    max_drawdown = $5,
+                    updated_at = $6
+                WHERE id = $7
+                """,
+                new_balance,
+                new_total_pnl,
+                new_trade_count,
+                new_win_rate,
+                new_max_drawdown,
+                datetime.utcnow(),
+                session_id
+            )
+            
+            logger.info(
+                "Session metrics updated after trade",
+                session_id=str(session_id),
+                new_balance=float(new_balance),
+                new_total_pnl=float(new_total_pnl),
+                trade_count=new_trade_count,
+                win_rate=new_win_rate
+            )
+
+        except Exception as e:
+            logger.error("Failed to update session metrics after trade", 
+                        session_id=str(session_id), error=str(e))
+            # Don't raise - trade was successful, metrics update failure shouldn't break the flow
+
+    @classmethod
+    async def update_session_metrics(
+        cls, 
+        session_id: UUID, 
+        portfolio_data: Dict[str, Any] = None,
+        metrics_data: Dict[str, Any] = None
+    ):
+        """Update session metrics from external sources (analytics service, portfolio manager, etc)."""
+        try:
+            async with cls._pool.acquire() as conn:
+                # Prepare update fields and values
+                update_fields = []
+                update_values = []
+                param_idx = 1
+                
+                if portfolio_data:
+                    if 'current_balance' in portfolio_data:
+                        update_fields.append(f"current_balance = ${param_idx}")
+                        update_values.append(Decimal(str(portfolio_data['current_balance'])))
+                        param_idx += 1
+                    
+                    if 'total_pnl' in portfolio_data:
+                        update_fields.append(f"total_pnl = ${param_idx}")
+                        update_values.append(Decimal(str(portfolio_data['total_pnl'])))
+                        param_idx += 1
+                
+                if metrics_data:
+                    if 'win_rate' in metrics_data:
+                        update_fields.append(f"win_rate = ${param_idx}")
+                        update_values.append(Decimal(str(metrics_data['win_rate'])))
+                        param_idx += 1
+                    
+                    if 'max_drawdown' in metrics_data:
+                        update_fields.append(f"max_drawdown = ${param_idx}")
+                        update_values.append(Decimal(str(metrics_data['max_drawdown'])))
+                        param_idx += 1
+                    
+                    if 'sharpe_ratio' in metrics_data:
+                        update_fields.append(f"sharpe_ratio = ${param_idx}")
+                        update_values.append(Decimal(str(metrics_data['sharpe_ratio'])))
+                        param_idx += 1
+                    
+                    if 'trade_count' in metrics_data:
+                        update_fields.append(f"trade_count = ${param_idx}")
+                        update_values.append(int(metrics_data['trade_count']))
+                        param_idx += 1
+                
+                if update_fields:
+                    # Always update the timestamp
+                    update_fields.append(f"updated_at = ${param_idx}")
+                    update_values.append(datetime.utcnow())
+                    
+                    query = f"""
+                        UPDATE forward_test_sessions
+                        SET {', '.join(update_fields)}
+                        WHERE id = ${param_idx + 1}
+                    """
+                    update_values.append(session_id)
+                    
+                    await conn.execute(query, *update_values)
+                    
+                    logger.info(
+                        "Session metrics updated from external source",
+                        session_id=str(session_id),
+                        updated_fields=len(update_fields) - 1  # Exclude updated_at
+                    )
+
+        except Exception as e:
+            logger.error("Failed to update session metrics from external source", 
+                        session_id=str(session_id), error=str(e))
 
 
 class MarketDataService:

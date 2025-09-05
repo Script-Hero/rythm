@@ -218,6 +218,76 @@ export const ForwardTestingProvider: React.FC<ForwardTestingProviderProps> = ({ 
 
   // (moved) WebSocket bridging effect is declared after handler definitions to avoid TDZ
 
+  // Chart data management functions - memoized to prevent infinite re-renders
+  const updateChartData = useCallback((sessionId: SessionIdentifier, type: 'price' | 'portfolio' | 'drawdown', data: any) => {
+    console.log(`📊 updateChartData called - Session: ${sessionId}, Type: ${type}, Data:`, data);
+    setSessionChartData(prev => {
+      const sessionData = prev[sessionId] || {
+        priceHistory: [],
+        portfolioHistory: [],
+        drawdownHistory: []
+      };
+      
+      const newSessionData = { ...sessionData };
+      
+      if (type === 'price') {
+        newSessionData.priceHistory = limitChartData([...sessionData.priceHistory, data], 50);
+        console.log(`📈 Price history updated - ${newSessionData.priceHistory.length} points`);
+      } else if (type === 'portfolio') {
+        newSessionData.portfolioHistory = limitChartData([...sessionData.portfolioHistory, data], 50);
+        console.log(`💼 Portfolio history updated - ${newSessionData.portfolioHistory.length} points`);
+      } else if (type === 'drawdown') {
+        newSessionData.drawdownHistory = limitChartData([...sessionData.drawdownHistory, data], 50);
+        console.log(`📉 Drawdown history updated - ${newSessionData.drawdownHistory.length} points`);
+      }
+      
+      return {
+        ...prev,
+        [sessionId]: newSessionData
+      };
+    });
+  }, []);
+
+  const setChartData = useCallback((sessionId: string, type: 'price' | 'portfolio' | 'drawdown', data: any[]) => {
+    console.log(`📊 Setting complete ${type} chart data for session ${sessionId}:`, data.length, 'points');
+    setSessionChartData(prev => {
+      const sessionData = prev[sessionId] || {
+        priceHistory: [],
+        portfolioHistory: [],
+        drawdownHistory: []
+      };
+      
+      const newSessionData = { ...sessionData };
+      
+      if (type === 'price') {
+        newSessionData.priceHistory = data;
+      } else if (type === 'portfolio') {
+        newSessionData.portfolioHistory = data;
+      } else if (type === 'drawdown') {
+        newSessionData.drawdownHistory = data;
+      }
+      
+      return {
+        ...prev,
+        [sessionId]: newSessionData
+      };
+    });
+  }, []);
+
+  // No aliasing required anymore; the system is unified on UUID session IDs
+
+  const clearChartData = useCallback((sessionId: string) => {
+    console.log(`🧹 Clearing chart data for session ${sessionId}`);
+    setSessionChartData(prev => ({
+      ...prev,
+      [sessionId]: {
+        priceHistory: [],
+        portfolioHistory: [],
+        drawdownHistory: []
+      }
+    }));
+  }, []);
+
   
   // Individual event handlers for multi-session support
   const handlePriceUpdate = useCallback((event: PriceUpdateEvent, sessionId: SessionIdentifier) => {
@@ -314,72 +384,88 @@ export const ForwardTestingProvider: React.FC<ForwardTestingProviderProps> = ({ 
   const handlePortfolioUpdate = useCallback((event: PortfolioUpdateEvent, sessionId: SessionIdentifier) => {
     const { portfolio, metrics } = event;
     
-    // Update session portfolio
+    console.log('💼 [ForwardTestingContext] Portfolio update received:', { sessionId, portfolio, metrics });
+    
+    // Update session portfolio - handle both camelCase and snake_case
     const updatedPortfolio: Portfolio = {
-      cash: portfolio.cash || 0,
-      positions: [], // TODO: Parse positions from backend
-      totalValue: portfolio.total_value || 0,
-      unrealizedPnL: 0, // TODO: Calculate from positions
-      realizedPnL: 0 // TODO: Get from backend
+      cash: portfolio.cash_balance || portfolio.cash || 0,
+      positions: portfolio.positions || [],
+      totalValue: portfolio.total_value || portfolio.totalValue || 0,
+      unrealizedPnL: portfolio.unrealized_pnl || portfolio.unrealizedPnL || 0,
+      realizedPnL: portfolio.realized_pnl || portfolio.realizedPnL || 0
     };
     
-    setSessionPortfolios(prev => ({
-      ...prev,
-      [sessionId]: updatedPortfolio
-    }));
+    setSessionPortfolios(prev => {
+      console.log('💼 Updating portfolio for session:', sessionId, 'Previous:', prev[sessionId], 'New:', updatedPortfolio);
+      return {
+        ...prev,
+        [sessionId]: updatedPortfolio
+      };
+    });
     
-    // Update session metrics
-    const updatedMetrics: Metrics = {
-      totalReturn: metrics.return_percentage || metrics.total_return || 0,
-      sharpeRatio: 0, // TODO: Calculate or get from backend
-      maxDrawdown: metrics.max_drawdown || 0,
-      winRate: metrics.win_rate || 0,
-      totalTrades: metrics.total_trades || 0,
-      currentDrawdown: metrics.current_drawdown || 0
+    // Update session metrics - merge only provided fields to avoid zeroing out values
+    const candidate: Partial<Metrics> = {
+      totalReturn: metrics?.return_percentage ?? metrics?.total_return ?? metrics?.totalReturn,
+      sharpeRatio: metrics?.sharpe_ratio ?? metrics?.sharpeRatio,
+      maxDrawdown: metrics?.max_drawdown ?? metrics?.maxDrawdown,
+      winRate: metrics?.win_rate ?? metrics?.winRate,
+      totalTrades: metrics?.total_trades ?? metrics?.totalTrades,
+      currentDrawdown: metrics?.current_drawdown ?? metrics?.currentDrawdown
     };
-    
-    setSessionMetrics(prev => ({
-      ...prev,
-      [sessionId]: updatedMetrics
-    }));
+    const cleanMetrics = Object.fromEntries(
+      Object.entries(candidate).filter(([, v]) => v !== undefined && v !== null)
+    );
+    let effectiveMetrics: Metrics | undefined = undefined;
+    if (Object.keys(cleanMetrics).length > 0) {
+      const existing = (sessionMetrics[sessionId] || {
+        totalReturn: 0,
+        sharpeRatio: 0,
+        maxDrawdown: 0,
+        winRate: 0,
+        totalTrades: 0,
+        currentDrawdown: 0,
+      }) as Metrics;
+      effectiveMetrics = { ...existing, ...(cleanMetrics as Partial<Metrics>) } as Metrics;
+      setSessionMetrics(prev => {
+        const next = { ...(prev[sessionId] || existing), ...(cleanMetrics as Partial<Metrics>) } as Metrics;
+        console.log('📊 Merging metrics for session:', sessionId, 'Incoming:', cleanMetrics, 'Result:', next);
+        return { ...prev, [sessionId]: next };
+      });
+    }
     
     // Create portfolio chart data point
     const portfolioData = createPortfolioDataPoint(
       sessionId,
-      portfolio.total_value || 0,
-      portfolio.cash,
-      portfolio.positions,
-      metrics.return_percentage
+      updatedPortfolio.totalValue,
+      updatedPortfolio.cash,
+      updatedPortfolio.positions,
+      (effectiveMetrics?.totalReturn ?? sessionMetrics[sessionId]?.totalReturn ?? 0)
     );
     updateChartData(sessionId, 'portfolio', portfolioData);
 
     // Append drawdown data point if available
-    const dd = typeof updatedMetrics.currentDrawdown === 'number' ? updatedMetrics.currentDrawdown : (typeof updatedMetrics.maxDrawdown === 'number' ? updatedMetrics.maxDrawdown : undefined);
+    const dd = (cleanMetrics as any).currentDrawdown;
     if (typeof dd === 'number') {
       updateChartData(sessionId, 'drawdown', { time: new Date().toISOString(), sessionId, drawdown: dd });
     }
     
-    // Update session objects
-    const updateSessionInList = (sessions: ForwardTestSession[]) => 
-      sessions.map(session => 
-        session.testId === sessionId 
-          ? {
-              ...session,
-              portfolioValue: portfolio.total_value || session.portfolioValue,
-              totalTrades: metrics.total_trades || session.totalTrades,
-              pnlPercent: metrics.return_percentage || metrics.total_return || session.pnlPercent,
-              maxDrawdown: metrics.max_drawdown || session.maxDrawdown,
-              winRate: metrics.win_rate || session.winRate
-            }
-          : session
-      );
+    // Update session objects with fresh data
+    setSessions(prev => prev.map(session => 
+      session.testId === sessionId 
+        ? {
+            ...session,
+            portfolioValue: updatedPortfolio.totalValue,
+            totalTrades: effectiveMetrics?.totalTrades ?? sessionMetrics[sessionId]?.totalTrades ?? session.totalTrades,
+            pnlPercent: effectiveMetrics?.totalReturn ?? sessionMetrics[sessionId]?.totalReturn ?? session.pnlPercent,
+            maxDrawdown: effectiveMetrics?.maxDrawdown ?? sessionMetrics[sessionId]?.maxDrawdown ?? session.maxDrawdown,
+            winRate: effectiveMetrics?.winRate ?? sessionMetrics[sessionId]?.winRate ?? session.winRate
+          }
+        : session
+    ));
     
-    //setActiveSessions(prev => updateSessionInList(prev));
-    //setRecentSessions(prev => updateSessionInList(prev));
-    setSessions(prev => updateSessionInList(prev));
-    console.log('💼 Portfolio updated for session:', sessionId, updatedPortfolio, updatedMetrics);
+    console.log('💼 Portfolio update complete for session:', sessionId);
 
-    // If session isn’t present yet (e.g. page opened mid-run), insert a placeholder so UI can bind
+    // If session isn't present yet (e.g. page opened mid-run), insert a placeholder so UI can bind
     setSessions(prev => {
       if (prev.some(s => s.testId === sessionId)) return prev;
       const placeholder: ForwardTestSession = {
@@ -402,18 +488,37 @@ export const ForwardTestingProvider: React.FC<ForwardTestingProviderProps> = ({ 
       };
       return [...prev, placeholder];
     });
-  }, []);
+  }, [updateChartData, sessionMetrics]);
   
   const handleMetricsUpdate = useCallback((event: any, sessionId: SessionIdentifier) => {
-    const updatedMetrics: Partial<Metrics> = event.metrics || {};
+    const metricsData = event.metrics || event.data?.metrics || {};
     
-    setSessionMetrics(prev => ({
-      ...prev,
-      [sessionId]: {
-        ...prev[sessionId],
-        ...updatedMetrics
-      } as Metrics
-    }));
+    // Handle field name variations and normalize to camelCase
+    const updatedMetrics: Partial<Metrics> = {
+      totalReturn: metricsData.return_percentage || metricsData.total_return || metricsData.totalReturn,
+      sharpeRatio: metricsData.sharpe_ratio || metricsData.sharpeRatio,
+      maxDrawdown: metricsData.max_drawdown || metricsData.maxDrawdown,
+      winRate: metricsData.win_rate || metricsData.winRate,
+      totalTrades: metricsData.total_trades || metricsData.totalTrades,
+      currentDrawdown: metricsData.current_drawdown || metricsData.currentDrawdown
+    };
+    
+    // Filter out undefined values
+    const cleanMetrics = Object.fromEntries(
+      Object.entries(updatedMetrics).filter(([_, value]) => value !== undefined)
+    );
+    
+    if (Object.keys(cleanMetrics).length > 0) {
+      setSessionMetrics(prev => {
+        const existing = prev[sessionId] || { totalReturn: 0, sharpeRatio: 0, maxDrawdown: 0, winRate: 0, totalTrades: 0, currentDrawdown: 0 };
+        const updated = { ...existing, ...cleanMetrics };
+        console.log('📊 Metrics update for session:', sessionId, 'Previous:', existing, 'New:', updated);
+        return {
+          ...prev,
+          [sessionId]: updated as Metrics
+        };
+      });
+    }
   }, []);
   
   const handleChartDataRestored = useCallback((event: ChartDataRestoredEvent, sessionId: SessionIdentifier) => {
@@ -434,187 +539,89 @@ export const ForwardTestingProvider: React.FC<ForwardTestingProviderProps> = ({ 
     toast.error(event.message || 'Forward test error');
   }, []);
 
-  // Subscribe to active sessions only when connection establishes
+  // Subscribe to active sessions whenever connection or session list changes
+  // Track already-subscribed sessions to avoid duplicate subscribe messages
+  const subscribedSessionsRef = useRef<Set<string>>(new Set());
   useEffect(() => {
     if (!isConnected) return;
-    const subscribeActive = async () => {
-      await Promise.all((sessions || [])
-        .filter(s => s.isActive)
-        .map(s => webSocket.subscribeToSession(s.testId))
-      );
-    };
-    subscribeActive().catch(() => {});
-    // do not depend on sessions to avoid repeated subscriptions
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isConnected, webSocket]);
+    const active = (sessions || []).filter(s => s.isActive).map(s => s.testId);
+    const toSubscribe = active.filter(id => !subscribedSessionsRef.current.has(id));
+    if (toSubscribe.length === 0) return;
+    Promise.all(toSubscribe.map(id => webSocket.subscribeToSession(id)))
+      .then(() => {
+        toSubscribe.forEach(id => subscribedSessionsRef.current.add(id));
+      })
+      .catch(() => {});
+  }, [isConnected, webSocket, sessions]);
 
-  // Bridge Notification Service messages into existing handlers (register once)
+  // Bridge all WebSocket messages through centralized event handler
   useEffect(() => {
-    const getSessionId = (msg: any): string | undefined => (msg?.session_id || msg?.data?.session_id) as string | undefined;
-
-    const onPortfolioUpdate = (msg: any) => {
-      const sessionId = getSessionId(msg);
-      if (!sessionId) return;
-      const portfolio = msg.portfolio || msg.data?.portfolio || {};
-      const metrics = msg.metrics || msg.data?.metrics || {};
-      handlePortfolioUpdate({
-        type: 'PORTFOLIO_UPDATE',
-        portfolio: {
-          total_value: portfolio.total_value ?? portfolio.totalValue ?? 0,
-          cash: portfolio.cash_balance ?? portfolio.cash ?? 0,
-          positions: portfolio.positions ?? {}
-        },
-        metrics: {
-          total_trades: metrics.total_trades ?? 0,
-          return_percentage: metrics.total_pnl_percent ?? portfolio.total_pnl_percent ?? 0,
-          max_drawdown: metrics.max_drawdown ?? 0,
-          win_rate: metrics.win_rate ?? 0,
-          current_drawdown: metrics.current_drawdown ?? 0
-        }
-      } as any, sessionId);
-    };
-
-    const onTradeExecution = (msg: any) => {
-      const sessionId = getSessionId(msg);
-      if (!sessionId) return;
-      const t = msg.trade || msg.data?.trade || {};
-      handleTradeExecuted({
-        type: 'TRADE_EXECUTED',
-        tradeId: t.trade_id || t.id,
-        id: t.trade_id || t.id,
-        symbol: t.symbol,
-        side: (t.side || t.action || 'BUY') as any,
-        quantity: Number(t.quantity || 0),
-        price: Number(t.price || 0),
-        timestamp: t.timestamp || Date.now(),
-        status: (t.status || 'FILLED') as any,
-        pnl: Number(t.pnl || 0)
-      } as any, sessionId);
-    };
-
-    const onRealtimeUpdate = (msg: any) => {
-      const sessionId = getSessionId(msg);
-      if (!sessionId) return;
-      const et = (msg.update_type || msg.data?.update_type || msg.event_type || msg.data?.event_type || '').toString().toUpperCase();
-
-      // PRICE_UPDATE → update price/time series
-      if (et === 'PRICE_UPDATE') {
-        const d = msg.data || msg;
-        const price = Number(d.price ?? d.data?.price ?? 0);
-        const volume = Number(d.volume ?? d.data?.volume ?? 0);
-        const symbol = d.symbol ?? d.data?.symbol;
-        if (price > 0) {
-          handlePriceUpdate({ type: 'PRICE_UPDATE', price, volume, symbol } as any, sessionId);
-        }
-        return;
+    // Single handler that routes all messages through handleWebSocketEvent
+    const messageRouter = (msg: any) => {
+      console.log('📡 [ForwardTestingContext] Message router received:', msg.type, msg);
+      
+      // Convert WebSocket message to internal event format
+      let event;
+      switch (msg.type) {
+        case 'portfolio_update':
+          event = {
+            type: 'PORTFOLIO_UPDATE',
+            session_id: msg.session_id || msg.data?.session_id,
+            portfolio: msg.data?.portfolio || msg.portfolio,
+            metrics: msg.data?.metrics || msg.metrics
+          };
+          break;
+        case 'trade_execution':
+          event = {
+            type: 'TRADE_EXECUTED',
+            session_id: msg.session_id || msg.data?.session_id,
+            trade: msg.data?.trade || msg.trade,
+            tradeId: msg.data?.trade?.trade_id || msg.trade?.id,
+            symbol: msg.data?.trade?.symbol || msg.trade?.symbol,
+            side: msg.data?.trade?.side || msg.data?.trade?.action,
+            quantity: msg.data?.trade?.quantity,
+            price: msg.data?.trade?.price,
+            timestamp: msg.timestamp || msg.data?.timestamp
+          };
+          break;
+        case 'forward_test_event':
+          event = {
+            type: 'FORWARD_TEST_EVENT',
+            session_id: msg.session_id || msg.data?.session_id,
+            event_type: msg.event_type || msg.data?.event_type
+          };
+          break;
+        case 'realtime_update':
+          event = {
+            type: 'REALTIME_UPDATE',
+            session_id: msg.session_id || msg.data?.session_id,
+            update_type: msg.update_type || msg.data?.update_type,
+            data: msg.data
+          };
+          break;
+        default:
+          // Pass through other message types as-is
+          event = msg;
       }
-
-      // CHART_DATA_UPDATE → hydrate both price and portfolio series
-      if (et === 'CHART_DATA_UPDATE') {
-        const cp = msg.data?.chart_point;
-        if (!cp) return;
-        const ts = typeof cp.timestamp === 'number' ? new Date(cp.timestamp * 1000).toISOString() : (cp.timestamp || new Date().toISOString());
-        // Price timeline
-        updateChartData(sessionId, 'price', {
-          time: ts,
-          sessionId,
-          price: Number(cp.price || 0),
-          volume: Number(cp.volume || 0)
-        });
-        // Portfolio timeline
-        updateChartData(sessionId, 'portfolio', {
-          time: ts,
-          sessionId,
-          value: Number(cp.portfolio_value || 0),
-          cash: Number(cp.cash_balance || 0),
-          return: Number(cp.pnl_percent || 0)
-        });
-        // Drawdown (if sent later we can wire; for now update metrics + session values)
-        // Update portfolio + metrics state for consistent UI numbers
-        const newValue = Number(cp.portfolio_value || 0);
-        const newReturn = Number(cp.pnl_percent || 0);
-        if (Number.isFinite(newValue) || Number.isFinite(newReturn)) {
-          if (Number.isFinite(newValue)) {
-            setSessionPortfolios(prev => ({
-              ...prev,
-              [sessionId]: {
-                ...(prev[sessionId] || { cash: 0, positions: [], totalValue: 0, unrealizedPnL: 0, realizedPnL: 0 }),
-                totalValue: newValue,
-                cash: Number(cp.cash_balance || (prev[sessionId]?.cash ?? 0))
-              }
-            }));
-            setSessions(prev => prev.map(s => s.testId === sessionId ? { ...s, portfolioValue: newValue } : s));
-          }
-          if (Number.isFinite(newReturn)) {
-            setSessionMetrics(prev => ({
-              ...prev,
-              [sessionId]: {
-                ...(prev[sessionId] || { totalReturn: 0, sharpeRatio: 0, maxDrawdown: 0, winRate: 0, totalTrades: 0, currentDrawdown: 0 }),
-                totalReturn: newReturn
-              }
-            }));
-            setSessions(prev => prev.map(s => s.testId === sessionId ? { ...s, pnlPercent: newReturn } : s));
-          }
-        }
-        // Also reflect current price in session header
-        if (cp.price) {
-          setSessions(prev => prev.map(s => s.testId === sessionId ? { ...s, currentPrice: Number(cp.price) } : s));
-        }
-        return;
-      }
-
-      // CHART_DATA_RESTORED → hydrate historical series
-      if (et === 'CHART_DATA_RESTORED') {
-        const chart = msg.data?.chart_data || msg.data?.chart || {};
-        const trades = msg.data?.trades || [];
-        handleChartDataRestored({
-          type: 'CHART_DATA_RESTORED',
-          chart_data: chart,
-          trades
-        } as any, sessionId);
-        return;
-      }
+      
+      handleWebSocketEvent(event);
     };
 
-    const onForwardTestEvent = (msg: any) => {
-      const sessionId = getSessionId(msg);
-      const eventType = msg.event_type || msg.data?.event_type;
-      if (!sessionId || !eventType) return;
-      setSessions(prev => prev.map(s => {
-        if (s.testId !== sessionId) return s;
-        switch (eventType) {
-          case 'SESSION_STARTED':
-            return { ...s, status: 'RUNNING' as any, isActive: true };
-          case 'SESSION_PAUSED':
-            return { ...s, status: 'PAUSED' as any, isActive: true };
-          case 'SESSION_RESUMED':
-            return { ...s, status: 'RUNNING' as any, isActive: true };
-          case 'SESSION_STOPPED':
-            return { ...s, status: 'STOPPED' as any, isActive: false };
-          case 'SESSION_ERROR':
-            return { ...s, status: 'ERROR' as any, isActive: false };
-          default:
-            return s;
-        }
-      }));
-    };
-
-    webSocket.addMessageHandler(MESSAGE_TYPES.PORTFOLIO_UPDATE, onPortfolioUpdate as any);
-    webSocket.addMessageHandler(MESSAGE_TYPES.TRADE_EXECUTION, onTradeExecution as any);
-    webSocket.addMessageHandler(MESSAGE_TYPES.FORWARD_TEST_EVENT, onForwardTestEvent as any);
-    webSocket.addMessageHandler(MESSAGE_TYPES.REALTIME_UPDATE, onRealtimeUpdate as any);
-    // Optional: register a no-op strategy signal handler to avoid console noise
-    const noop = () => {};
-    webSocket.addMessageHandler(MESSAGE_TYPES.STRATEGY_SIGNAL, noop as any);
+    // Register the single router for all message types
+    webSocket.addMessageHandler(MESSAGE_TYPES.PORTFOLIO_UPDATE, messageRouter);
+    webSocket.addMessageHandler(MESSAGE_TYPES.TRADE_EXECUTION, messageRouter);
+    webSocket.addMessageHandler(MESSAGE_TYPES.FORWARD_TEST_EVENT, messageRouter);
+    webSocket.addMessageHandler(MESSAGE_TYPES.REALTIME_UPDATE, messageRouter);
+    webSocket.addMessageHandler(MESSAGE_TYPES.STRATEGY_SIGNAL, messageRouter);
 
     return () => {
-      webSocket.removeMessageHandler(MESSAGE_TYPES.PORTFOLIO_UPDATE, onPortfolioUpdate as any);
-      webSocket.removeMessageHandler(MESSAGE_TYPES.TRADE_EXECUTION, onTradeExecution as any);
-      webSocket.removeMessageHandler(MESSAGE_TYPES.FORWARD_TEST_EVENT, onForwardTestEvent as any);
-      webSocket.removeMessageHandler(MESSAGE_TYPES.REALTIME_UPDATE, onRealtimeUpdate as any);
-      webSocket.removeMessageHandler(MESSAGE_TYPES.STRATEGY_SIGNAL, noop as any);
+      webSocket.removeMessageHandler(MESSAGE_TYPES.PORTFOLIO_UPDATE, messageRouter);
+      webSocket.removeMessageHandler(MESSAGE_TYPES.TRADE_EXECUTION, messageRouter);
+      webSocket.removeMessageHandler(MESSAGE_TYPES.FORWARD_TEST_EVENT, messageRouter);
+      webSocket.removeMessageHandler(MESSAGE_TYPES.REALTIME_UPDATE, messageRouter);
+      webSocket.removeMessageHandler(MESSAGE_TYPES.STRATEGY_SIGNAL, messageRouter);
     };
-  }, [webSocket, handlePortfolioUpdate, handleTradeExecuted]);
+  }, [webSocket]); // Remove handleWebSocketEvent dependency to prevent re-registration
 
   // Initial sessions load (once) or on first connect
   useEffect(() => {
@@ -625,75 +632,7 @@ export const ForwardTestingProvider: React.FC<ForwardTestingProviderProps> = ({ 
     checkActiveTests();
   }, [isConnected, checkActiveTests]);
   
-  // Chart data management functions - memoized to prevent infinite re-renders
-  const updateChartData = useCallback((sessionId: SessionIdentifier, type: 'price' | 'portfolio' | 'drawdown', data: any) => {
-    console.log(`📊 updateChartData called - Session: ${sessionId}, Type: ${type}, Data:`, data);
-    setSessionChartData(prev => {
-      const sessionData = prev[sessionId] || {
-        priceHistory: [],
-        portfolioHistory: [],
-        drawdownHistory: []
-      };
-      
-      const newSessionData = { ...sessionData };
-      
-      if (type === 'price') {
-        newSessionData.priceHistory = limitChartData([...sessionData.priceHistory, data], 50);
-        console.log(`📈 Price history updated - ${newSessionData.priceHistory.length} points`);
-      } else if (type === 'portfolio') {
-        newSessionData.portfolioHistory = limitChartData([...sessionData.portfolioHistory, data], 50);
-        console.log(`💼 Portfolio history updated - ${newSessionData.portfolioHistory.length} points`);
-      } else if (type === 'drawdown') {
-        newSessionData.drawdownHistory = limitChartData([...sessionData.drawdownHistory, data], 50);
-        console.log(`📉 Drawdown history updated - ${newSessionData.drawdownHistory.length} points`);
-      }
-      
-      return {
-        ...prev,
-        [sessionId]: newSessionData
-      };
-    });
-  }, []);
-
-  const setChartData = useCallback((sessionId: string, type: 'price' | 'portfolio' | 'drawdown', data: any[]) => {
-    console.log(`📊 Setting complete ${type} chart data for session ${sessionId}:`, data.length, 'points');
-    setSessionChartData(prev => {
-      const sessionData = prev[sessionId] || {
-        priceHistory: [],
-        portfolioHistory: [],
-        drawdownHistory: []
-      };
-      
-      const newSessionData = { ...sessionData };
-      
-      if (type === 'price') {
-        newSessionData.priceHistory = data;
-      } else if (type === 'portfolio') {
-        newSessionData.portfolioHistory = data;
-      } else if (type === 'drawdown') {
-        newSessionData.drawdownHistory = data;
-      }
-      
-      return {
-        ...prev,
-        [sessionId]: newSessionData
-      };
-    });
-  }, []);
-
-  // No aliasing required anymore; the system is unified on UUID session IDs
-
-  const clearChartData = useCallback((sessionId: string) => {
-    console.log(`🧹 Clearing chart data for session ${sessionId}`);
-    setSessionChartData(prev => ({
-      ...prev,
-      [sessionId]: {
-        priceHistory: [],
-        portfolioHistory: [],
-        drawdownHistory: []
-      }
-    }));
-  }, []);
+  // (moved above) Chart data management functions
 
   // Session management functions
   const getSession = useCallback((sessionId: string): ForwardTestSession | null => {
@@ -882,7 +821,9 @@ export const ForwardTestingProvider: React.FC<ForwardTestingProviderProps> = ({ 
         delete newData[sessionId];
         return newData;
       });
-      
+      // Remove subscription tracking
+      subscribedSessionsRef.current.delete(sessionId);
+
       // Refresh session list from backend after successful delete
       await checkActiveTests();
       
@@ -923,6 +864,7 @@ export const ForwardTestingProvider: React.FC<ForwardTestingProviderProps> = ({ 
       ));
       
       try { await webSocket.subscribeToSession(sessionId); } catch {}
+      subscribedSessionsRef.current.add(sessionId);
       toast.success(`Started session: ${session.name}`);
       return true;
     } catch (error) {
@@ -1003,6 +945,7 @@ export const ForwardTestingProvider: React.FC<ForwardTestingProviderProps> = ({ 
       ));
       
       try { await webSocket.unsubscribeFromSession(sessionId); } catch {}
+      subscribedSessionsRef.current.delete(sessionId);
       
       toast.success(`Stopped session: ${session.name}`);
     } catch (error) {

@@ -304,10 +304,17 @@ class AnalyticsKafkaProcessor:
             # Update trade count
             new_trade_count = session.trade_count + 1
             
-            # Calculate basic win rate if PnL is available
+            # Update portfolio metrics
             pnl = trade_message.get("pnl")
+            new_total_pnl = session.total_pnl
+            new_current_balance = session.current_balance
+            
             if pnl is not None:
                 pnl_decimal = Decimal(str(pnl))
+                new_total_pnl = (session.total_pnl or Decimal("0")) + pnl_decimal
+                new_current_balance = (session.current_balance or session.initial_balance) + pnl_decimal
+                
+                # Calculate win rate
                 if pnl_decimal > 0:
                     # This is a winning trade
                     total_winning = int(session.win_rate * session.trade_count / 100) + 1
@@ -318,6 +325,13 @@ class AnalyticsKafkaProcessor:
                     new_win_rate = (total_winning / new_trade_count) * 100
             else:
                 new_win_rate = session.win_rate
+
+            # Calculate max drawdown
+            initial_balance = session.initial_balance
+            current_drawdown_pct = 0
+            if initial_balance and new_current_balance:
+                current_drawdown_pct = max(0, (initial_balance - new_current_balance) / initial_balance * 100)
+            new_max_drawdown = max(session.max_drawdown or 0, current_drawdown_pct)
             
             # Update session
             await db.execute(
@@ -326,6 +340,9 @@ class AnalyticsKafkaProcessor:
                 .values(
                     trade_count=new_trade_count,
                     win_rate=new_win_rate,
+                    total_pnl=new_total_pnl,
+                    current_balance=new_current_balance,
+                    max_drawdown=new_max_drawdown,
                     updated_at=datetime.utcnow()
                 )
             )
@@ -339,14 +356,16 @@ class AnalyticsKafkaProcessor:
             logger.error("Failed to update session trade metrics", error=str(e))
     
     async def _store_portfolio_value(self, db: AsyncSession, session_id: str, portfolio_message: Dict[str, Any]):
-        """Store portfolio value for time series analysis."""
-        from .models import ChartData
+        """Store portfolio value for time series analysis and update session balance."""
+        from .models import ChartData, ForwardTestSession
+        from sqlalchemy import update, select
         from datetime import datetime
         
         try:
             # Accept both flat and nested message shapes
             payload = portfolio_message.get("portfolio_data", portfolio_message)
             total_value = payload.get("total_value")
+            cash_balance = payload.get("cash_balance")
             ts_value = portfolio_message.get("timestamp") or payload.get("last_updated") or payload.get("timestamp")
 
             if total_value is None or ts_value is None:
@@ -364,16 +383,52 @@ class AnalyticsKafkaProcessor:
             else:
                 return
 
-            # Store portfolio value
+            # Store portfolio value for charts
             chart_data = ChartData(
                 session_id=session_id,
                 data_type="portfolio",
                 timestamp=int(timestamp.timestamp()),
                 value=Decimal(str(total_value)),
-                metadata_json={"cash_balance": payload.get("cash_balance")}
+                metadata_json={"cash_balance": cash_balance}
             )
             
             db.add(chart_data)
+            
+            # Update session current balance and calculate total PnL
+            session_result = await db.execute(
+                select(ForwardTestSession).where(ForwardTestSession.session_id == session_id)
+            )
+            session = session_result.scalar_one_or_none()
+            
+            if session:
+                new_current_balance = Decimal(str(total_value))
+                initial_balance = session.initial_balance
+                new_total_pnl = new_current_balance - initial_balance if initial_balance else Decimal("0")
+                
+                # Calculate max drawdown from peak balance
+                if initial_balance and new_current_balance:
+                    current_drawdown_pct = max(0, (initial_balance - new_current_balance) / initial_balance * 100)
+                    new_max_drawdown = max(session.max_drawdown or 0, current_drawdown_pct)
+                else:
+                    new_max_drawdown = session.max_drawdown or 0
+                
+                await db.execute(
+                    update(ForwardTestSession)
+                    .where(ForwardTestSession.session_id == session_id)
+                    .values(
+                        current_balance=new_current_balance,
+                        total_pnl=new_total_pnl,
+                        max_drawdown=new_max_drawdown,
+                        updated_at=datetime.utcnow()
+                    )
+                )
+                
+                logger.debug("Updated session portfolio metrics",
+                           session_id=session_id,
+                           current_balance=float(new_current_balance),
+                           total_pnl=float(new_total_pnl),
+                           max_drawdown=float(new_max_drawdown))
+            
             await db.flush()
             
         except Exception as e:

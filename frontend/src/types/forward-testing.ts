@@ -26,31 +26,31 @@ export interface ForwardTestSession {
 export interface Portfolio {
   cash: number;
   positions: Position[];
-  totalValue: number;
-  unrealizedPnL: number;
-  realizedPnL: number;
+  total_value: number;
+  unrealized_pnl: number;
+  realized_pnl: number;
 }
 
 export interface Position {
   symbol: string;
   quantity: number;
-  avgPrice: number;
-  currentValue: number;
-  unrealizedPnL?: number;
+  avg_price: number;
+  current_value: number;
+  unrealized_pnl?: number;
 }
 
 export interface Metrics {
-  totalReturn: number;
-  sharpeRatio: number;
-  maxDrawdown: number;
-  winRate: number;
-  totalTrades: number;
-  currentDrawdown: number;
-  profitFactor?: number;
-  avgWin?: number;
-  avgLoss?: number;
-  consecutiveWins?: number;
-  consecutiveLosses?: number;
+  total_return: number;
+  sharpe_ratio: number;
+  max_drawdown: number;
+  win_rate: number;
+  total_trades: number;
+  current_drawdown: number;
+  profit_factor?: number;
+  avg_win?: number;
+  avg_loss?: number;
+  consecutive_wins?: number;
+  consecutive_losses?: number;
 }
 
 export interface Trade {

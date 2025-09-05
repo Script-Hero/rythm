@@ -62,18 +62,26 @@ async def get_portfolio_data(session_id: str, current_user: User) -> dict:
         if not session:
             return {}
         
+        # Get actual portfolio data from session
+        cash_balance = float(session.current_balance)
+        total_value = cash_balance  # Simplified - should add position values
+        total_pnl = float(session.total_pnl)
+        initial_balance = float(session.starting_balance)
+        total_pnl_percent = (total_pnl / initial_balance * 100) if initial_balance > 0 else 0.0
+        
         portfolio = PortfolioSummary(
             session_id=session.id,
-            cash_balance=100000,
-            total_value=100000,
-            total_pnl=0,
-            total_pnl_percent=0.0,
-            positions=[],
-            position_count=0,
+            cash_balance=cash_balance,
+            total_value=total_value,
+            total_pnl=total_pnl,
+            total_pnl_percent=total_pnl_percent,
+            positions=[],  # TODO: Get actual positions from database
+            position_count=0,  # TODO: Count actual positions
             updated_at=time.time()
         )
         return portfolio.dict()
-    except Exception:
+    except Exception as e:
+        logger.error("Failed to get portfolio data", session_id=session_id, error=str(e))
         return {}
 
 
@@ -83,9 +91,34 @@ async def get_metrics_data(session_id: str, current_user: User) -> dict:
         session = await DatabaseService.get_session_by_session_id(session_id, UUID(current_user.id))
         if not session:
             return {}
-        metrics = await session_manager.get_session_metrics(session.id)
-        return metrics or {}
-    except Exception:
+        
+        # Build metrics from session data
+        total_pnl = float(session.total_pnl)
+        initial_balance = float(session.starting_balance)
+        total_pnl_percent = (total_pnl / initial_balance * 100) if initial_balance > 0 else 0.0
+        
+        metrics = SessionMetrics(
+            session_id=session.id,
+            total_trades=session.total_trades,
+            winning_trades=session.winning_trades,
+            losing_trades=session.losing_trades,
+            win_rate=float(session.win_rate),
+            total_pnl=session.total_pnl,
+            total_pnl_percent=total_pnl_percent,
+            max_drawdown=session.max_drawdown,
+            max_drawdown_percent=float(session.max_drawdown),
+            sharpe_ratio=float(session.sharpe_ratio) if session.sharpe_ratio else None,
+            profit_factor=None,  # TODO: Calculate profit factor
+            average_trade_pnl=session.total_pnl / max(session.total_trades, 1),
+            largest_win=Decimal("0"),  # TODO: Get from trades data
+            largest_loss=Decimal("0"),  # TODO: Get from trades data
+            consecutive_wins=0,  # TODO: Calculate from trades sequence
+            consecutive_losses=0,  # TODO: Calculate from trades sequence
+            updated_at=datetime.utcnow()
+        )
+        return metrics.dict()
+    except Exception as e:
+        logger.error("Failed to get metrics data", session_id=session_id, error=str(e))
         return {}
 
 
@@ -310,6 +343,89 @@ async def update_session_status(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Session update failed"
+        )
+
+
+@app.get("/{session_id}/portfolio")
+async def get_session_portfolio(
+    session_id: str,
+    current_user: User = Depends(get_current_user)
+):
+    """Get current portfolio data for a session."""
+    try:
+        portfolio_data = await get_portfolio_data(session_id, current_user)
+        if not portfolio_data:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Session not found or no portfolio data"
+            )
+        
+        return StandardResponse.success_response(
+            data=portfolio_data,
+            message="Portfolio data retrieved successfully"
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Failed to get portfolio data", session_id=session_id, error=str(e))
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to retrieve portfolio data"
+        )
+
+
+@app.get("/{session_id}/metrics")
+async def get_session_metrics(
+    session_id: str,
+    current_user: User = Depends(get_current_user)
+):
+    """Get current performance metrics for a session."""
+    try:
+        metrics_data = await get_metrics_data(session_id, current_user)
+        if not metrics_data:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Session not found or no metrics data"
+            )
+        
+        return StandardResponse.success_response(
+            data=metrics_data,
+            message="Metrics data retrieved successfully"
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Failed to get metrics data", session_id=session_id, error=str(e))
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to retrieve metrics data"
+        )
+
+
+@app.get("/{session_id}/trades")
+async def get_session_trades(
+    session_id: str,
+    limit: int = 50,
+    current_user: User = Depends(get_current_user)
+):
+    """Get recent trades for a session."""
+    try:
+        trades_data = await get_trades_data(session_id, current_user)
+        
+        return StandardResponse.success_response(
+            data={"trades": trades_data, "count": len(trades_data)},
+            message="Trades data retrieved successfully"
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Failed to get trades data", session_id=session_id, error=str(e))
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to retrieve trades data"
         )
 
 

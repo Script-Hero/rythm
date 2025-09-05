@@ -93,7 +93,12 @@ class ForwardTestSessionResponse(BaseModel):
     losing_trades: int = 0
     total_pnl: Decimal = Decimal("0")
     unrealized_pnl: Decimal = Decimal("0")
+    realized_pnl: Decimal = Decimal("0")  # For frontend compatibility
     max_drawdown: Decimal = Decimal("0")
+    win_rate: Decimal = Decimal("0")
+    sharpe_ratio: Decimal = Decimal("0")
+    total_return: Decimal = Decimal("0")  # PnL as percentage for frontend
+    current_portfolio_value: Decimal = Decimal("0")  # Alias for current_balance for frontend compatibility
     
     class Config:
         from_attributes = True

@@ -247,70 +247,6 @@ export function useRealtimeData(options: UseRealtimeDataOptions = {}) {
     loading: false
   });
 
-  // Handle portfolio updates
-  const handlePortfolioUpdate = useCallback((message: WebSocketMessage) => {
-    const msgSessionId = message.session_id as any;
-    if (msgSessionId === sessionId) {
-      console.log('💰 useRealtimeData: Portfolio update received', message.data);
-      setData(prev => ({
-        ...prev,
-        portfolio: message.data.portfolio,
-        lastUpdate: message.timestamp || Date.now()
-      }));
-    }
-  }, [sessionId]);
-
-  // Handle trade executions
-  const handleTradeExecution = useCallback((message: WebSocketMessage) => {
-    const msgSessionId = message.session_id as any;
-    if (msgSessionId === sessionId) {
-      console.log('📈 useRealtimeData: Trade execution received', message.data);
-      // Normalize trade shape (support action->side)
-      const incoming = message.data?.trade || {};
-      const normalizedTrade = { ...incoming, side: incoming.side || incoming.action };
-      setData(prev => ({
-        ...prev,
-        trades: [normalizedTrade, ...prev.trades.slice(0, 99)], // Keep last 100 trades
-        lastUpdate: message.timestamp || Date.now()
-      }));
-    }
-  }, [sessionId]);
-
-  // Handle strategy signals
-  const handleStrategySignal = useCallback((message: WebSocketMessage) => {
-    const msgSessionId = message.session_id as any;
-    if (msgSessionId === sessionId) {
-      console.log('🎯 useRealtimeData: Strategy signal received', message.data);
-      // Could trigger UI notifications or charts updates
-    }
-  }, [sessionId]);
-
-  // Handle real-time updates (price data, metrics)
-  const handleRealtimeUpdate = useCallback((message: WebSocketMessage) => {
-    const msgSessionId = message.session_id as any;
-    if (msgSessionId === sessionId) {
-      console.log('📊 useRealtimeData: Realtime update received', message.data);
-      
-      if (message.data.update_type === 'price_update') {
-        // Add to chart data
-        setData(prev => ({
-          ...prev,
-          chartData: [...prev.chartData.slice(-999), { // Keep last 1000 points
-            timestamp: message.timestamp,
-            price: message.data.price,
-            volume: message.data.volume
-          }],
-          lastUpdate: message.timestamp || Date.now()
-        }));
-      } else if (message.data.update_type === 'metrics_update') {
-        setData(prev => ({
-          ...prev,
-          metrics: message.data.metrics,
-          lastUpdate: message.timestamp || Date.now()
-        }));
-      }
-    }
-  }, [sessionId]);
 
   // Subscribe to session updates
   useEffect(() => {
@@ -326,21 +262,6 @@ export function useRealtimeData(options: UseRealtimeDataOptions = {}) {
       };
     }
   }, [sessionId, autoSubscribe, webSocket.connected]);
-
-  // Add message handlers
-  useEffect(() => {
-    webSocket.addMessageHandler(MESSAGE_TYPES.PORTFOLIO_UPDATE, handlePortfolioUpdate);
-    webSocket.addMessageHandler(MESSAGE_TYPES.TRADE_EXECUTION, handleTradeExecution);
-    webSocket.addMessageHandler(MESSAGE_TYPES.STRATEGY_SIGNAL, handleStrategySignal);
-    webSocket.addMessageHandler(MESSAGE_TYPES.REALTIME_UPDATE, handleRealtimeUpdate);
-
-    return () => {
-      webSocket.removeMessageHandler(MESSAGE_TYPES.PORTFOLIO_UPDATE, handlePortfolioUpdate);
-      webSocket.removeMessageHandler(MESSAGE_TYPES.TRADE_EXECUTION, handleTradeExecution);
-      webSocket.removeMessageHandler(MESSAGE_TYPES.STRATEGY_SIGNAL, handleStrategySignal);
-      webSocket.removeMessageHandler(MESSAGE_TYPES.REALTIME_UPDATE, handleRealtimeUpdate);
-    };
-  }, [webSocket, handlePortfolioUpdate, handleTradeExecution, handleStrategySignal, handleRealtimeUpdate]);
 
   // Load initial data when session ID changes
   useEffect(() => {

@@ -14,8 +14,13 @@ interface LiveMetricsDashboardProps {
 }
 
 export const LiveMetricsDashboard = ({ portfolio, metrics, currentPrice, initialBalance = 10000 }: LiveMetricsDashboardProps) => {
-  const totalPnL = portfolio.unrealizedPnL + portfolio.realizedPnL;
-  const pnlPercentage = ((portfolio.totalValue - initialBalance) / initialBalance) * 100;
+  // Normalize portfolio fields (support camelCase and snake_case)
+  const totalValue = (portfolio as any).totalValue ?? (portfolio as any).total_value ?? 0;
+  const cash = (portfolio as any).cash ?? (portfolio as any).cash_balance ?? 0;
+  const unrealizedPnL = (portfolio as any).unrealizedPnL ?? (portfolio as any).unrealized_pnl ?? 0;
+  const realizedPnL = (portfolio as any).realizedPnL ?? (portfolio as any).realized_pnl ?? 0;
+  const totalPnL = (unrealizedPnL || 0) + (realizedPnL || 0);
+  const pnlPercentage = ((totalValue - initialBalance) / initialBalance) * 100;
 
   // formatCurrency and formatPercentage now imported from utils
 
@@ -33,15 +38,11 @@ export const LiveMetricsDashboard = ({ portfolio, metrics, currentPrice, initial
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
             <div className="space-y-1">
               <div className="text-sm text-muted-foreground">Total Value</div>
-              <div className="text-2xl font-bold">
-                {formatCurrency(portfolio.totalValue)}
-              </div>
+              <div className="text-2xl font-bold">{formatCurrency(totalValue)}</div>
             </div>
             <div className="space-y-1">
               <div className="text-sm text-muted-foreground">Cash</div>
-              <div className="text-xl font-semibold">
-                {formatCurrency(portfolio.cash)}
-              </div>
+              <div className="text-xl font-semibold">{formatCurrency(cash)}</div>
             </div>
             <div className="space-y-1">
               <div className="text-sm text-muted-foreground">Total P&L</div>
@@ -72,16 +73,16 @@ export const LiveMetricsDashboard = ({ portfolio, metrics, currentPrice, initial
                     <div className="flex items-center gap-3">
                       <span className="font-medium">{position.symbol}</span>
                       <span className="text-sm text-muted-foreground">
-                        {position.quantity} shares @ {formatCurrency(position.avgPrice)}
+                        {position.quantity} shares @ {formatCurrency(((position as any).avg_price ?? (position as any).avgPrice ?? 0))}
                       </span>
                     </div>
                     <div className="text-right">
-                      <div className="font-medium">{formatCurrency(position.currentValue)}</div>
+                      <div className="font-medium">{formatCurrency(((position as any).current_value ?? (position as any).currentValue ?? 0))}</div>
                       <div className={`text-sm ${
-                        position.currentValue >= position.quantity * position.avgPrice
+                        (((position as any).current_value ?? (position as any).currentValue ?? 0) >= position.quantity * (((position as any).avg_price ?? (position as any).avgPrice) ?? 0))
                           ? 'text-green-600' : 'text-red-600'
                       }`}>
-                        {formatCurrency(position.currentValue - (position.quantity * position.avgPrice))}
+                        {formatCurrency(((position as any).current_value ?? (position as any).currentValue ?? 0) - (position.quantity * (((position as any).avg_price ?? (position as any).avgPrice) ?? 0)))}
                       </div>
                     </div>
                   </div>
@@ -105,10 +106,10 @@ export const LiveMetricsDashboard = ({ portfolio, metrics, currentPrice, initial
             <div className="space-y-2">
               <div className="flex items-center justify-between">
                 <span className="text-sm text-muted-foreground">Sharpe Ratio</span>
-                <span className="font-medium">{metrics.sharpeRatio.toFixed(2)}</span>
+                <span className="font-medium">{(((metrics as any).sharpeRatio ?? (metrics as any).sharpe_ratio) || 0).toFixed(2)}</span>
               </div>
               <Progress 
-                value={Math.min(Math.max((metrics.sharpeRatio + 2) * 25, 0), 100)} 
+                value={Math.min(Math.max(((((metrics as any).sharpeRatio ?? (metrics as any).sharpe_ratio) || 0) + 2) * 25, 0), 100)} 
                 className="h-2"
               />
             </div>
@@ -116,20 +117,20 @@ export const LiveMetricsDashboard = ({ portfolio, metrics, currentPrice, initial
             <div className="space-y-2">
               <div className="flex items-center justify-between">
                 <span className="text-sm text-muted-foreground">Win Rate</span>
-                <span className="font-medium">{formatPercentage(metrics.winRate)}</span>
+                <span className="font-medium">{formatPercentage(((metrics as any).winRate ?? (metrics as any).win_rate) || 0)}</span>
               </div>
-              <Progress value={metrics.winRate} className="h-2" />
+              <Progress value={((metrics as any).winRate ?? (metrics as any).win_rate) || 0} className="h-2" />
             </div>
 
             <div className="space-y-2">
               <div className="flex items-center justify-between">
                 <span className="text-sm text-muted-foreground">Max Drawdown</span>
-                <span className={`font-medium ${metrics.maxDrawdown < -5 ? 'text-red-600' : 'text-yellow-600'}`}>
-                  {formatPercentage(metrics.maxDrawdown)}
+                <span className={`font-medium ${(((metrics as any).maxDrawdown ?? (metrics as any).max_drawdown) || 0) < -5 ? 'text-red-600' : 'text-yellow-600'}`}>
+                  {formatPercentage(((metrics as any).maxDrawdown ?? (metrics as any).max_drawdown) || 0)}
                 </span>
               </div>
               <Progress 
-                value={Math.abs(metrics.maxDrawdown)} 
+                value={Math.abs(((metrics as any).maxDrawdown ?? (metrics as any).max_drawdown) || 0)} 
                 className="h-2"
               />
             </div>
@@ -137,12 +138,12 @@ export const LiveMetricsDashboard = ({ portfolio, metrics, currentPrice, initial
             <div className="space-y-2">
               <div className="flex items-center justify-between">
                 <span className="text-sm text-muted-foreground">Current Drawdown</span>
-                <span className={`font-medium ${metrics.currentDrawdown < -3 ? 'text-red-600' : 'text-gray-600'}`}>
-                  {formatPercentage(metrics.currentDrawdown)}
+                <span className={`font-medium ${(((metrics as any).currentDrawdown ?? (metrics as any).current_drawdown) || 0) < -3 ? 'text-red-600' : 'text-gray-600'}`}>
+                  {formatPercentage(((metrics as any).currentDrawdown ?? (metrics as any).current_drawdown) || 0)}
                 </span>
               </div>
               <Progress 
-                value={Math.abs(metrics.currentDrawdown)} 
+                value={Math.abs(((metrics as any).currentDrawdown ?? (metrics as any).current_drawdown) || 0)} 
                 className="h-2"
               />
             </div>
@@ -150,7 +151,7 @@ export const LiveMetricsDashboard = ({ portfolio, metrics, currentPrice, initial
             <div className="space-y-2">
               <div className="flex items-center justify-between">
                 <span className="text-sm text-muted-foreground">Total Trades</span>
-                <span className="font-medium">{metrics.totalTrades}</span>
+                <span className="font-medium">{((metrics as any).totalTrades ?? (metrics as any).total_trades) || 0}</span>
               </div>
             </div>
 
