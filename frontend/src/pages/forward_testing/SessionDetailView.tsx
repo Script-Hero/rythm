@@ -22,6 +22,7 @@ import { LiveMetricsDashboard } from './components/LiveMetricsDashboard';
 import { ChartsGrid } from './components/ChartsGrid';
 import { TradeAlerts } from './components/TradeAlerts';
 import { PerformanceStats } from './components/PerformanceStats';
+import { ForwardTestHeader } from './components/ForwardTestHeader';
 
 interface SessionDetailState {
   currentPrice: number;
@@ -495,52 +496,53 @@ const SessionDetailView = () => {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center">
-          <Button 
-            variant="ghost" 
-            size="sm" 
+          <Button
+            variant="ghost"
+            size="sm"
             onClick={() => navigate('/forward-testing')}
             className="mr-4"
           >
             <ChevronLeft className="h-4 w-4 mr-1" />
             Back to Sessions
           </Button>
-          <div>
-            <div className="flex items-center gap-3">
-              <h1 className="text-2xl font-bold">{session.name}</h1>
-              <Badge 
-                variant={session.status === 'RUNNING' ? 'default' : 'secondary'}
-                className={
-                  session.status === 'RUNNING' ? 'bg-green-100 text-green-800' :
-                  session.status === 'PAUSED' ? 'bg-yellow-100 text-yellow-800' :
-                  'bg-gray-100 text-gray-800'
-                }
-              >
-                {session.status}
-              </Badge>
-              <Badge variant="outline" className="text-sm">
-                {session.symbol} • {session.timeframe}
-              </Badge>
-              {state.currentPrice > 0 && (
-                <Badge variant="outline" className="text-sm">
-                  ${state.currentPrice.toFixed(2)}
-                </Badge>
-              )}
-            </div>
+          <div className="min-w-[300px]">
+            <ForwardTestHeader
+              settings={{
+                symbol: session.symbol,
+                timeframe: session.timeframe, // ensure correct timeframe flows to header
+                slippage: Number((session.settings as any)?.slippage ?? 0),
+                commissionType: ((session.settings as any)?.commissionType ?? 'percentage') as 'fixed' | 'percentage',
+                commission: Number((session.settings as any)?.commission ?? 0),
+                soundEnabled: Boolean((session.settings as any)?.soundEnabled),
+                notificationsEnabled: Boolean((session.settings as any)?.notificationsEnabled),
+              }}
+              currentPrice={state.currentPrice}
+              tradesCount={state.trades.length}
+              onToggleSound={() => {
+                setSession(prev => prev ? {
+                  ...prev,
+                  settings: { ...prev.settings, soundEnabled: !Boolean((prev.settings as any)?.soundEnabled) }
+                } : prev);
+              }}
+              onToggleNotifications={() => {
+                setSession(prev => prev ? {
+                  ...prev,
+                  settings: { ...prev.settings, notificationsEnabled: !Boolean((prev.settings as any)?.notificationsEnabled) }
+                } : prev);
+              }}
+              onExportData={handleExportData}
+              onRestoreSession={() => {
+                // Placeholder: could call an API to restore chart data if available
+                toast.info('Restore session requested');
+              }}
+            />
             <p className="text-muted-foreground">
               {session.strategyName} • Started {session.startTime.toLocaleString()}
             </p>
           </div>
         </div>
-        <div className="flex items-center gap-2">
-          <Button
-            variant="outline"
-            onClick={handleExportData}
-            disabled={state.trades.length === 0}
-          >
-            <Download className="h-4 w-4 mr-2" />
-            Export Data
-          </Button>
-        </div>
+        {/* Right-side controls are provided by ForwardTestHeader */}
+        <div />
       </div>
 
       {/* Control Panel */}

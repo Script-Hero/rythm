@@ -188,6 +188,9 @@ class SessionMapper:
         cash_balance = safe_float_conversion(normalized.get('cash_balance'))
         total_value = safe_float_conversion(normalized.get('total_value'))
         total_pnl = safe_float_conversion(normalized.get('total_pnl'))
+        trade_count = safe_int_conversion(
+            normalized.get('trade_count') if normalized.get('trade_count') is not None else normalized.get('total_trades')
+        )
         
         # Calculate percentage if we have initial balance
         total_pnl_percent = 0.0
@@ -208,6 +211,7 @@ class SessionMapper:
             total_pnl_percent=total_pnl_percent,
             positions=positions,
             position_count=len(positions),
+            trade_count=trade_count,
             updated_at=safe_float_conversion(normalized.get('updated_at'), datetime.now().timestamp()),
             realized_pnl=safe_float_conversion(normalized.get('realized_pnl')),
             unrealized_pnl=safe_float_conversion(normalized.get('unrealized_pnl'))

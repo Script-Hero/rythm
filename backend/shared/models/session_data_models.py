@@ -22,6 +22,7 @@ class SessionPortfolioData:
     total_pnl_percent: float
     positions: List[Dict[str, Any]]
     position_count: int
+    trade_count: int
     updated_at: float
     
     # Separate PnL fields for clarity

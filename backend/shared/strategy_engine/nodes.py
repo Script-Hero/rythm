@@ -904,7 +904,6 @@ class BuyNode(Node):
                    node_data=self.data)
         
         if trigger_in:
-<<<<<<< HEAD
             # Ensure quantity is properly typed and validated
             try:
                 quantity_raw = self.data.get("quantity", 100)
@@ -936,23 +935,6 @@ class BuyNode(Node):
                            quantity_raw=self.data.get("quantity"),
                            error=str(e))
                 return {"signal-out": None}
-=======
-            quantity = self.data.get("quantity", 100)
-            order_type = self.data.get("orderType", "market")
-            
-            signal = {
-                "action": "BUY",
-                "quantity": quantity,
-                "order_type": order_type
-            }
-            
-            logger.debug("🎯 BuyNode generating BUY signal", 
-                       node_id=self.id,
-                       signal=signal,
-                       trigger_value=trigger_in)
-            
-            return {"signal-out": signal}
->>>>>>> 0d055d97dfa2ebafe955b24ac853a3fda3257494
         
         logger.debug("⏸️ BuyNode not triggered", 
                    node_id=self.id,
@@ -973,7 +955,6 @@ class SellNode(Node):
                    node_data=self.data)
         
         if trigger_in:
-<<<<<<< HEAD
             # Ensure quantity is properly typed and validated
             try:
                 quantity_raw = self.data.get("quantity", 100)
@@ -1017,23 +998,6 @@ class SellNode(Node):
                            quantity_raw=self.data.get("quantity"),
                            error=str(e))
                 return {"signal-out": None}
-=======
-            quantity = self.data.get("quantity", 100)
-            order_type = self.data.get("orderType", "market")
-            
-            signal = {
-                "action": "SELL", 
-                "quantity": quantity,
-                "order_type": order_type
-            }
-            
-            logger.debug("🎯 SellNode generating SELL signal", 
-                       node_id=self.id,
-                       signal=signal,
-                       trigger_value=trigger_in)
-            
-            return {"signal-out": signal}
->>>>>>> 0d055d97dfa2ebafe955b24ac853a3fda3257494
         
         logger.debug("⏸️ SellNode not triggered", 
                    node_id=self.id,
@@ -1222,10 +1186,6 @@ def get_available_nodes() -> Dict[str, Dict[str, Any]]:
     
     return nodes_info
 
-<<<<<<< HEAD
-
-=======
->>>>>>> 0d055d97dfa2ebafe955b24ac853a3fda3257494
 def _get_node_category(node_type: str) -> str:
     """Categorize nodes for UI organization."""
     if node_type in ["priceNode", "volumeNode", "timeNode", "constantNode"]:

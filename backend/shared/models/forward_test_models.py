@@ -72,6 +72,7 @@ class ForwardTestSessionResponse(BaseModel):
     strategy_id: UUID
     strategy_snapshot: Dict[str, Any]  # Full strategy JSON for historical analysis
     symbol: str
+    timeframe: str  # ensure timeframe is included in responses
     session_name: Optional[str]
     strategy_name: Optional[str]
     description: Optional[str]
