@@ -190,12 +190,23 @@ class ApiService {
             status: response.status,
             errorData: errorData
           });
-          errorMessage = errorData.error || errorData.detail || errorMessage;
+          
+          // Extract error message from nested structure
+          if (errorData.error && typeof errorData.error === 'object') {
+            // Handle nested error objects (e.g., { error: { message: "...", compilation_errors: [...] } })
+            errorMessage = errorData.error.message || 
+                          (errorData.error.compilation_errors && errorData.error.compilation_errors.length > 0 
+                            ? `Compilation failed: ${errorData.error.compilation_errors.join(', ')}` 
+                            : JSON.stringify(errorData.error));
+          } else {
+            // Handle simple string errors
+            errorMessage = errorData.error || errorData.detail || errorData.message || errorMessage;
+          }
         } catch {
           // Failed to parse error response, use default message
         }
         
-        throw new Error(String(errorMessage));
+        throw new Error(errorMessage);
       }
 
       const responseData = await response.json();
