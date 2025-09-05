@@ -83,7 +83,7 @@ class DatabaseService:
         # Derive values expected by schema
         strategy_name = (strategy_snapshot or {}).get("name") or "Strategy"
         name = session_data.session_name or strategy_name
-        timeframe = "1m"  # default if not provided by caller
+        timeframe = session_data.timeframe or "1m"  # Use timeframe from request data
 
         # Persist full settings for future analytics and controls
         settings_obj: Dict[str, Any] = {

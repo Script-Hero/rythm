@@ -98,6 +98,12 @@ export const ForwardTestingProvider: React.FC<ForwardTestingProviderProps> = ({ 
   const [sessionAlerts, setSessionAlerts] = useState<Record<SessionIdentifier, Alert[]>>({});
   const [sessionChartData, setSessionChartData] = useState<Record<SessionIdentifier, ChartData>>({});
   
+  // State trigger to force updates when sessions change
+  const [sessionUpdateTrigger, setSessionUpdateTrigger] = useState(0);
+  const triggerSessionUpdate = useCallback(() => {
+    setSessionUpdateTrigger(prev => prev + 1);
+  }, []);
+  
   // Connection state
   const [socket, setSocket] = useState<Socket | null>(null);
   const [isConnected, setIsConnected] = useState(false);
@@ -177,25 +183,25 @@ export const ForwardTestingProvider: React.FC<ForwardTestingProviderProps> = ({ 
           return Number.isFinite(n) ? n : d;
         };
         const sessions = response.message.sessions.map((test: any) => {
-          const strategyName = test.strategy_name || test.strategyName || test.strategy?.name || 'Strategy';
-          const testId = test.session_id || test.sessionId || test.id; // canonical UUID only
+          const strategy_name = test.strategy_name || test.strategyName || test.strategy?.name || 'Strategy';
+          const session_id = test.session_id || test.sessionId || test.id; // canonical UUID only
           return {
-            testId,
-            name: test.name || test.session_name || `${strategyName} Test`,
-            strategyName,
+            session_id,
+            session_name: test.session_name || test.name || `${strategy_name} Test`,
+            strategy_name,
             status: test.status,
-            startTime: new Date(test.start_time || test.startTime || Date.now()),
-            isActive: test.status === 'RUNNING' || test.status === 'PAUSED',
+            start_time: new Date(test.started_at || test.start_time || test.startTime || Date.now()),
+            is_active: test.status === 'RUNNING' || test.status === 'PAUSED',
             settings: test.settings || {},
             symbol: test.symbol || 'BTC/USD',
-            timeframe: test.timeframe || '1m',
-            portfolioValue: toNum(test.current_portfolio_value ?? test.portfolioValue ?? test.initial_balance, 10000),
-            totalTrades: toNum(test.total_trades ?? test.totalTrades, 0),
-            pnlPercent: toNum(test.total_return ?? test.pnlPercent, 0),
-            pnlDollar: toNum(test.realized_pnl ?? test.pnlDollar, 0),
-            maxDrawdown: toNum(test.max_drawdown ?? test.maxDrawdown, 0),
-            winRate: toNum(test.win_rate ?? test.winRate, 0),
-            initialBalance: toNum(test.initial_balance ?? test.initialBalance, -1)
+            timeframe: test.timeframe, // Don't override with default - trust backend data
+            current_portfolio_value: toNum(test.current_portfolio_value ?? test.portfolioValue ?? test.initial_balance, 10000),
+            total_trades: toNum(test.total_trades ?? test.totalTrades, 0),
+            total_return: toNum(test.total_return ?? test.pnlPercent, 0),
+            total_pnl: toNum(test.total_pnl ?? test.realized_pnl ?? test.pnlDollar, 0),
+            max_drawdown: toNum(test.max_drawdown ?? test.maxDrawdown, 0),
+            win_rate: toNum(test.win_rate ?? test.winRate, 0),
+            initial_balance: toNum(test.initial_balance ?? test.initialBalance, 10000)
           } as ForwardTestSession;
         });
         console.log('🔄 [ForwardTestingContext] Parsed sessions from server:', sessions);
@@ -299,7 +305,7 @@ export const ForwardTestingProvider: React.FC<ForwardTestingProviderProps> = ({ 
     );
     updateChartData(sessionId, 'price', priceData);
     // Update session's visible currentPrice for header/overview
-    setSessions(prev => prev.map(s => s.testId === sessionId ? { ...s, currentPrice: event.price } : s));
+    setSessions(prev => prev.map(s => s.session_id === sessionId ? { ...s, current_price: event.price } : s));
   }, []);
   
   const handleTradeExecuted = useCallback((event: TradeExecutedEvent, sessionId: SessionIdentifier) => {
@@ -342,25 +348,25 @@ export const ForwardTestingProvider: React.FC<ForwardTestingProviderProps> = ({ 
 
     // Ensure session exists in list for UI binding
     setSessions(prev => {
-      if (prev.some(s => s.testId === sessionId)) return prev;
+      if (prev.some(s => s.session_id === sessionId)) return prev;
       const placeholder: ForwardTestSession = {
-        testId: sessionId,
-        name: `Session ${sessionId.slice(0, 8)}`,
-        strategyName: 'Unknown',
+        session_id: sessionId,
+        session_name: `Session ${sessionId.slice(0, 8)}`,
+        strategy_name: 'Unknown',
         status: 'RUNNING',
-        startTime: new Date(),
-        isActive: true,
+        start_time: new Date(),
+        is_active: true,
         settings: {} as any,
         symbol: (event as any).symbol || 'UNKNOWN',
         timeframe: '1m',
-        portfolioValue: 0,
-        initialBalance: 0,
-        totalTrades: 1,
-        pnlPercent: 0,
-        pnlDollar: 0,
-        maxDrawdown: 0,
-        winRate: 0,
-        currentPrice: event.price
+        current_portfolio_value: 0,
+        initial_balance: 0,
+        total_trades: 1,
+        total_return: 0,
+        total_pnl: 0,
+        max_drawdown: 0,
+        win_rate: 0,
+        current_price: event.price
       };
       return [...prev, placeholder];
     });
@@ -378,7 +384,7 @@ export const ForwardTestingProvider: React.FC<ForwardTestingProviderProps> = ({ 
       };
       return { ...prev, [sessionId]: updated };
     });
-    setSessions(prev => prev.map(s => s.testId === sessionId ? { ...s, totalTrades: (s.totalTrades ?? 0) + 1 } : s));
+    setSessions(prev => prev.map(s => s.session_id === sessionId ? { ...s, total_trades: (s.total_trades ?? 0) + 1 } : s));
   }, []);
   
   const handlePortfolioUpdate = useCallback((event: PortfolioUpdateEvent, sessionId: SessionIdentifier) => {
@@ -386,13 +392,17 @@ export const ForwardTestingProvider: React.FC<ForwardTestingProviderProps> = ({ 
     
     console.log('💼 [ForwardTestingContext] Portfolio update received:', { sessionId, portfolio, metrics });
     
-    // Update session portfolio - handle both camelCase and snake_case
+    // Update session portfolio - standardized to snake_case
     const updatedPortfolio: Portfolio = {
-      cash: portfolio.cash_balance || portfolio.cash || 0,
+      cash_balance: portfolio.cash_balance || portfolio.cash || 0,
       positions: portfolio.positions || [],
-      totalValue: portfolio.total_value || portfolio.totalValue || 0,
-      unrealizedPnL: portfolio.unrealized_pnl || portfolio.unrealizedPnL || 0,
-      realizedPnL: portfolio.realized_pnl || portfolio.realizedPnL || 0
+      total_value: portfolio.total_value || portfolio.totalValue || 0,
+      unrealized_pnl: portfolio.unrealized_pnl || portfolio.unrealizedPnL || 0,
+      realized_pnl: portfolio.realized_pnl || portfolio.realizedPnL || 0,
+      total_pnl: portfolio.total_pnl || (portfolio.realized_pnl || 0) + (portfolio.unrealized_pnl || 0),
+      total_pnl_percent: portfolio.total_pnl_percent || 0,
+      position_count: portfolio.position_count || (portfolio.positions || []).length,
+      updated_at: portfolio.updated_at || Date.now()
     };
     
     setSessionPortfolios(prev => {
@@ -403,14 +413,19 @@ export const ForwardTestingProvider: React.FC<ForwardTestingProviderProps> = ({ 
       };
     });
     
-    // Update session metrics - merge only provided fields to avoid zeroing out values
+    // Update session metrics - standardized field names, merge only provided fields
     const candidate: Partial<Metrics> = {
-      totalReturn: metrics?.return_percentage ?? metrics?.total_return ?? metrics?.totalReturn,
-      sharpeRatio: metrics?.sharpe_ratio ?? metrics?.sharpeRatio,
-      maxDrawdown: metrics?.max_drawdown ?? metrics?.maxDrawdown,
-      winRate: metrics?.win_rate ?? metrics?.winRate,
-      totalTrades: metrics?.total_trades ?? metrics?.totalTrades,
-      currentDrawdown: metrics?.current_drawdown ?? metrics?.currentDrawdown
+      total_return: metrics?.total_return ?? metrics?.return_percentage ?? metrics?.totalReturn,
+      sharpe_ratio: metrics?.sharpe_ratio ?? metrics?.sharpeRatio,
+      max_drawdown: metrics?.max_drawdown ?? metrics?.maxDrawdown,
+      max_drawdown_percent: metrics?.max_drawdown_percent ?? metrics?.max_drawdown ?? 0,
+      win_rate: metrics?.win_rate ?? metrics?.winRate,
+      total_trades: metrics?.total_trades ?? metrics?.totalTrades,
+      winning_trades: metrics?.winning_trades ?? 0,
+      losing_trades: metrics?.losing_trades ?? 0,
+      current_drawdown: metrics?.current_drawdown ?? metrics?.currentDrawdown,
+      total_pnl: metrics?.total_pnl ?? 0,
+      total_pnl_percent: metrics?.total_pnl_percent ?? 0
     };
     const cleanMetrics = Object.fromEntries(
       Object.entries(candidate).filter(([, v]) => v !== undefined && v !== null)
@@ -418,12 +433,17 @@ export const ForwardTestingProvider: React.FC<ForwardTestingProviderProps> = ({ 
     let effectiveMetrics: Metrics | undefined = undefined;
     if (Object.keys(cleanMetrics).length > 0) {
       const existing = (sessionMetrics[sessionId] || {
-        totalReturn: 0,
-        sharpeRatio: 0,
-        maxDrawdown: 0,
-        winRate: 0,
-        totalTrades: 0,
-        currentDrawdown: 0,
+        total_return: 0,
+        sharpe_ratio: 0,
+        max_drawdown: 0,
+        max_drawdown_percent: 0,
+        win_rate: 0,
+        total_trades: 0,
+        winning_trades: 0,
+        losing_trades: 0,
+        current_drawdown: 0,
+        total_pnl: 0,
+        total_pnl_percent: 0
       }) as Metrics;
       effectiveMetrics = { ...existing, ...(cleanMetrics as Partial<Metrics>) } as Metrics;
       setSessionMetrics(prev => {
@@ -436,10 +456,10 @@ export const ForwardTestingProvider: React.FC<ForwardTestingProviderProps> = ({ 
     // Create portfolio chart data point
     const portfolioData = createPortfolioDataPoint(
       sessionId,
-      updatedPortfolio.totalValue,
-      updatedPortfolio.cash,
+      updatedPortfolio.total_value,
+      updatedPortfolio.cash_balance,
       updatedPortfolio.positions,
-      (effectiveMetrics?.totalReturn ?? sessionMetrics[sessionId]?.totalReturn ?? 0)
+      (effectiveMetrics?.total_return ?? sessionMetrics[sessionId]?.total_return ?? 0)
     );
     updateChartData(sessionId, 'portfolio', portfolioData);
 
@@ -451,14 +471,15 @@ export const ForwardTestingProvider: React.FC<ForwardTestingProviderProps> = ({ 
     
     // Update session objects with fresh data
     setSessions(prev => prev.map(session => 
-      session.testId === sessionId 
+      session.session_id === sessionId 
         ? {
             ...session,
-            portfolioValue: updatedPortfolio.totalValue,
-            totalTrades: effectiveMetrics?.totalTrades ?? sessionMetrics[sessionId]?.totalTrades ?? session.totalTrades,
-            pnlPercent: effectiveMetrics?.totalReturn ?? sessionMetrics[sessionId]?.totalReturn ?? session.pnlPercent,
-            maxDrawdown: effectiveMetrics?.maxDrawdown ?? sessionMetrics[sessionId]?.maxDrawdown ?? session.maxDrawdown,
-            winRate: effectiveMetrics?.winRate ?? sessionMetrics[sessionId]?.winRate ?? session.winRate
+            current_portfolio_value: updatedPortfolio.total_value,
+            total_trades: effectiveMetrics?.total_trades ?? sessionMetrics[sessionId]?.total_trades ?? session.total_trades,
+            total_return: effectiveMetrics?.total_return ?? sessionMetrics[sessionId]?.total_return ?? session.total_return,
+            total_pnl: effectiveMetrics?.total_pnl ?? sessionMetrics[sessionId]?.total_pnl ?? session.total_pnl,
+            max_drawdown: effectiveMetrics?.max_drawdown ?? sessionMetrics[sessionId]?.max_drawdown ?? session.max_drawdown,
+            win_rate: effectiveMetrics?.win_rate ?? sessionMetrics[sessionId]?.win_rate ?? session.win_rate
           }
         : session
     ));
@@ -467,24 +488,24 @@ export const ForwardTestingProvider: React.FC<ForwardTestingProviderProps> = ({ 
 
     // If session isn't present yet (e.g. page opened mid-run), insert a placeholder so UI can bind
     setSessions(prev => {
-      if (prev.some(s => s.testId === sessionId)) return prev;
+      if (prev.some(s => s.session_id === sessionId)) return prev;
       const placeholder: ForwardTestSession = {
-        testId: sessionId,
-        name: `Session ${sessionId.slice(0, 8)}`,
-        strategyName: 'Unknown',
+        session_id: sessionId,
+        session_name: `Session ${sessionId.slice(0, 8)}`,
+        strategy_name: 'Unknown',
         status: 'RUNNING',
-        startTime: new Date(),
-        isActive: true,
+        start_time: new Date(),
+        is_active: true,
         settings: {} as any,
         symbol: 'UNKNOWN',
         timeframe: '1m',
-        portfolioValue: updatedPortfolio.totalValue || 0,
-        initialBalance: updatedPortfolio.totalValue || 0,
-        totalTrades: updatedMetrics.totalTrades || 0,
-        pnlPercent: updatedMetrics.totalReturn || 0,
-        pnlDollar: 0,
-        maxDrawdown: updatedMetrics.maxDrawdown || 0,
-        winRate: updatedMetrics.winRate || 0,
+        current_portfolio_value: updatedPortfolio.total_value || 0,
+        initial_balance: updatedPortfolio.total_value || 0,
+        total_trades: effectiveMetrics?.total_trades || 0,
+        total_return: effectiveMetrics?.total_return || 0,
+        total_pnl: effectiveMetrics?.total_pnl || 0,
+        max_drawdown: effectiveMetrics?.max_drawdown || 0,
+        win_rate: effectiveMetrics?.win_rate || 0,
       };
       return [...prev, placeholder];
     });
@@ -544,7 +565,7 @@ export const ForwardTestingProvider: React.FC<ForwardTestingProviderProps> = ({ 
   const subscribedSessionsRef = useRef<Set<string>>(new Set());
   useEffect(() => {
     if (!isConnected) return;
-    const active = (sessions || []).filter(s => s.isActive).map(s => s.testId);
+    const active = (sessions || []).filter(s => s.is_active).map(s => s.session_id);
     const toSubscribe = active.filter(id => !subscribedSessionsRef.current.has(id));
     if (toSubscribe.length === 0) return;
     Promise.all(toSubscribe.map(id => webSocket.subscribeToSession(id)))
@@ -591,14 +612,50 @@ export const ForwardTestingProvider: React.FC<ForwardTestingProviderProps> = ({ 
             event_type: msg.event_type || msg.data?.event_type
           };
           break;
-        case 'realtime_update':
-          event = {
-            type: 'REALTIME_UPDATE',
-            session_id: msg.session_id || msg.data?.session_id,
-            update_type: msg.update_type || msg.data?.update_type,
-            data: msg.data
-          };
+        case 'realtime_update': {
+          const payload = msg.data || {};
+          const eventType = payload.event_type || msg.update_type || payload.update_type;
+          const sid = payload.session_id || msg.session_id;
+
+          if (eventType === 'PORTFOLIO_UPDATE') {
+            event = {
+              type: 'PORTFOLIO_UPDATE',
+              session_id: sid,
+              portfolio: payload.data?.portfolio || payload.data || {},
+              metrics: payload.session_metrics || payload.metrics
+            };
+          } else if (eventType === 'TRADE_EXECUTED') {
+            const t = payload.data || {};
+            event = {
+              type: 'TRADE_EXECUTED',
+              session_id: sid,
+              trade: t,
+              tradeId: t.trade_id || t.id,
+              symbol: t.symbol,
+              side: t.side || t.action,
+              quantity: t.quantity,
+              price: t.price,
+              timestamp: payload.timestamp || t.timestamp
+            };
+          } else if (eventType === 'PRICE_UPDATE') {
+            event = {
+              type: 'PRICE_UPDATE',
+              session_id: sid,
+              symbol: payload.data?.symbol,
+              price: payload.data?.price,
+              timestamp: payload.data?.timestamp
+            };
+          } else {
+            // Fallback passthrough for other realtime updates
+            event = {
+              type: 'REALTIME_UPDATE',
+              session_id: sid,
+              update_type: eventType,
+              data: payload
+            };
+          }
           break;
+        }
         default:
           // Pass through other message types as-is
           event = msg;
@@ -637,10 +694,10 @@ export const ForwardTestingProvider: React.FC<ForwardTestingProviderProps> = ({ 
   // Session management functions
   const getSession = useCallback((sessionId: string): ForwardTestSession | null => {
     console.log('🔍 [ForwardTestingContext] getSession looking for sessionId:', sessionId);
-    console.log('🔍 [ForwardTestingContext] sessions:', sessions.map(s => ({ testId: s.testId, status: s.status })));
+    console.log('🔍 [ForwardTestingContext] sessions:', sessions.map(s => ({ session_id: s.session_id, status: s.status })));
     
     // Look in all sessions
-    const session = sessions.find(session => session.testId === sessionId);
+    const session = sessions.find(session => session.session_id === sessionId);
     
     console.log('🔍 [ForwardTestingContext] getSession found:', session);
     return session || null;
@@ -737,22 +794,22 @@ export const ForwardTestingProvider: React.FC<ForwardTestingProviderProps> = ({ 
         
         // Add to local sessions so it can be found by getSession
         const newSession: ForwardTestSession = {
-          testId: response.session_id,
-          name: name,
-          strategyName: strategy.name,
+          session_id: response.session_id,
+          session_name: name,
+          strategy_name: strategy.name,
           status: 'STOPPED',
-          startTime: new Date(),
-          isActive: false,
+          start_time: new Date(),
+          is_active: false,
           settings: settings,
           symbol: settings.symbol || 'BTC/USD',
-          timeframe: settings.timeframe || '1m',
-          portfolioValue: settings.initialBalance || 10000,
-          initialBalance: settings.initialBalance || 10000,
-          totalTrades: 0,
-          pnlPercent: 0,
-          pnlDollar: 0,
-          maxDrawdown: 0,
-          winRate: 0
+          timeframe: settings.timeframe, // Preserve the actual timeframe from settings
+          current_portfolio_value: settings.initialBalance || 10000,
+          initial_balance: settings.initialBalance || 10000,
+          total_trades: 0,
+          total_return: 0,
+          total_pnl: 0,
+          max_drawdown: 0,
+          win_rate: 0
         };
         
         setSessions(prev => {
@@ -789,7 +846,7 @@ export const ForwardTestingProvider: React.FC<ForwardTestingProviderProps> = ({ 
       await apiService.deleteForwardTestSession(sessionId);
       
       // Remove session from local state immediately for responsive UI
-      setSessions(prev => prev.filter(s => s.testId !== sessionId));
+      setSessions(prev => prev.filter(s => s.session_id !== sessionId));
       
       // Clear all session data
       setSessionChartData(prev => {
@@ -860,12 +917,13 @@ export const ForwardTestingProvider: React.FC<ForwardTestingProviderProps> = ({ 
       
       // Update local state immediately
       setSessions(prev => prev.map(s => 
-        s.testId === sessionId ? { ...s, status: 'RUNNING' as any, isActive: true } : s
+        s.session_id === sessionId ? { ...s, status: 'RUNNING' as any, is_active: true } : s
       ));
+      triggerSessionUpdate();
       
       try { await webSocket.subscribeToSession(sessionId); } catch {}
       subscribedSessionsRef.current.add(sessionId);
-      toast.success(`Started session: ${session.name}`);
+      toast.success(`Started session: ${session.session_name}`);
       return true;
     } catch (error) {
       console.error('Error starting forward test:', error);
@@ -886,12 +944,13 @@ export const ForwardTestingProvider: React.FC<ForwardTestingProviderProps> = ({ 
       
       // Update local state immediately
       setSessions(prev => prev.map(s => 
-        s.testId === sessionId ? { ...s, status: 'PAUSED' as any, isActive: true } : s
+        s.session_id === sessionId ? { ...s, status: 'PAUSED' as any, is_active: true } : s
       ));
+      triggerSessionUpdate();
       
       // keep subscription during pause
       
-      toast.success(`Paused session: ${session.name}`);
+      toast.success(`Paused session: ${session.session_name}`);
     } catch (error) {
       console.error('Error pausing forward test:', error);
       toast.error('Failed to pause forward test');
@@ -910,8 +969,9 @@ export const ForwardTestingProvider: React.FC<ForwardTestingProviderProps> = ({ 
       
       // Update local state immediately
       setSessions(prev => prev.map(s => 
-        s.testId === sessionId ? { ...s, status: 'RUNNING' as any, isActive: true } : s
+        s.session_id === sessionId ? { ...s, status: 'RUNNING' as any, is_active: true } : s
       ));
+      triggerSessionUpdate();
       
       if (socket) {
         socket.emit('forward_test_event', {
@@ -920,7 +980,7 @@ export const ForwardTestingProvider: React.FC<ForwardTestingProviderProps> = ({ 
         });
       }
       
-      toast.success(`Resumed session: ${session.name}`);
+      toast.success(`Resumed session: ${session.session_name}`);
       return true;
     } catch (error) {
       console.error('Error resuming forward test:', error);
@@ -941,13 +1001,14 @@ export const ForwardTestingProvider: React.FC<ForwardTestingProviderProps> = ({ 
       
       // Update local state immediately
       setSessions(prev => prev.map(s => 
-        s.testId === sessionId ? { ...s, status: 'STOPPED' as any, isActive: false } : s
+        s.session_id === sessionId ? { ...s, status: 'STOPPED' as any, is_active: false } : s
       ));
+      triggerSessionUpdate();
       
       try { await webSocket.unsubscribeFromSession(sessionId); } catch {}
       subscribedSessionsRef.current.delete(sessionId);
       
-      toast.success(`Stopped session: ${session.name}`);
+      toast.success(`Stopped session: ${session.session_name}`);
     } catch (error) {
       console.error('Error stopping forward test:', error);
       toast.error('Failed to stop forward test');
@@ -963,10 +1024,11 @@ export const ForwardTestingProvider: React.FC<ForwardTestingProviderProps> = ({ 
       if (response.success) {
         // Update local session status
         setSessions(prev => prev.map(session => 
-          session.testId === sessionId 
-            ? { ...session, status: status as any, isActive: ['RUNNING', 'PAUSED'].includes(status) }
+          session.session_id === sessionId 
+            ? { ...session, status: status as any, is_active: ['RUNNING', 'PAUSED'].includes(status) }
             : session
         ));
+        triggerSessionUpdate();
 
         console.log(`✅ [ForwardTestingContext] Updated session ${sessionId} status to ${status}`);
         toast.success(`Session status updated to ${status}`);
@@ -984,23 +1046,23 @@ export const ForwardTestingProvider: React.FC<ForwardTestingProviderProps> = ({ 
       const sessionId = sessionData.session.session_id;
 
       const restoredSession: ForwardTestSession = {
-        testId: sessionId,
-        name: sessionData.session.name || `${sessionData.session.strategy_name} Test`,
-        strategyName: sessionData.session.strategy_name,
+        session_id: sessionId,
+        session_name: sessionData.session.session_name || sessionData.session.name || `${sessionData.session.strategy_name} Test`,
+        strategy_name: sessionData.session.strategy_name,
         status: sessionData.session.status || 'STOPPED',
-        startTime: new Date(sessionData.session.start_time),
-        isActive: ['RUNNING', 'PAUSED'].includes(sessionData.session.status),
+        start_time: new Date(sessionData.session.start_time),
+        is_active: ['RUNNING', 'PAUSED'].includes(sessionData.session.status),
         settings: sessionData.session.settings || {},
         symbol: sessionData.session.symbol || 'BTC/USD',
-        timeframe: sessionData.session.timeframe || '1m',
-        portfolioValue: sessionData.session.current_portfolio_value || sessionData.session.initial_balance || 10000,
-        initialBalance: sessionData.session.initial_balance || 10000,
-        totalTrades: sessionData.session.total_trades || 0,
-        pnlPercent: sessionData.session.total_return || 0,
-        pnlDollar: sessionData.session.realized_pnl || 0,
-        maxDrawdown: sessionData.session.max_drawdown || 0,
-        winRate: sessionData.session.win_rate || 0,
-        currentPrice: 0,
+        timeframe: sessionData.session.timeframe, // Don't override with default - trust backend data
+        current_portfolio_value: sessionData.session.current_portfolio_value || sessionData.session.initial_balance || 10000,
+        initial_balance: sessionData.session.initial_balance || 10000,
+        total_trades: sessionData.session.total_trades || 0,
+        total_return: sessionData.session.total_return || 0,
+        total_pnl: sessionData.session.total_pnl || sessionData.session.realized_pnl || 0,
+        max_drawdown: sessionData.session.max_drawdown || 0,
+        win_rate: sessionData.session.win_rate || 0,
+        current_price: 0,
         runtime: 0
       };
       
@@ -1008,7 +1070,7 @@ export const ForwardTestingProvider: React.FC<ForwardTestingProviderProps> = ({ 
       
       // Update or add the session
       setSessions(prev => {
-        const existingIndex = prev.findIndex(s => s.testId === sessionId);
+        const existingIndex = prev.findIndex(s => s.session_id === sessionId);
         if (existingIndex >= 0) {
           const newSessions = [...prev];
           newSessions[existingIndex] = restoredSession;
@@ -1135,9 +1197,9 @@ export const ForwardTestingProvider: React.FC<ForwardTestingProviderProps> = ({ 
     addSessionAlert,
     
     // Legacy compatibility (for existing components)
-    activeSession: sessions.length > 0 ? sessions.find(s => s.isActive) || sessions[0] : null,
-    chartData: sessions.length > 0 && sessionChartData[sessions[0].testId] 
-      ? sessionChartData[sessions[0].testId] 
+    activeSession: sessions.length > 0 ? sessions.find(s => s.is_active) || sessions[0] : null,
+    chartData: sessions.length > 0 && sessionChartData[sessions[0].session_id] 
+      ? sessionChartData[sessions[0].session_id] 
       : { priceHistory: [], portfolioHistory: [], drawdownHistory: [] },
   }), [
     sessions,
@@ -1146,6 +1208,7 @@ export const ForwardTestingProvider: React.FC<ForwardTestingProviderProps> = ({ 
     sessionTrades,
     sessionAlerts,
     sessionChartData,
+    sessionUpdateTrigger, // Include trigger to force updates
     isConnected,
     socket,
     updateChartData,

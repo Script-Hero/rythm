@@ -8,6 +8,8 @@ import time
 from contextlib import asynccontextmanager
 from typing import List, Dict, Any, Optional
 from uuid import UUID
+from decimal import Decimal
+from datetime import datetime
 
 import structlog
 import uvicorn
@@ -27,6 +29,7 @@ from shared.models.forward_test_models import (
 from shared.response_models import (
     StandardResponse, ListResponse, SessionDetailResponse, CreationResponse
 )
+from shared.utils.session_mapper import SessionMapper
 
 from .config import settings
 from .services import DatabaseService, MarketDataService, StrategyService, TradingEngine
@@ -62,24 +65,22 @@ async def get_portfolio_data(session_id: str, current_user: User) -> dict:
         if not session:
             return {}
         
-        # Get actual portfolio data from session
-        cash_balance = float(session.current_balance)
-        total_value = cash_balance  # Simplified - should add position values
-        total_pnl = float(session.total_pnl)
-        initial_balance = float(session.starting_balance)
-        total_pnl_percent = (total_pnl / initial_balance * 100) if initial_balance > 0 else 0.0
+        # Use SessionMapper to create standardized portfolio data
+        raw_portfolio = {
+            'session_id': str(session.id),
+            'cash_balance': float(session.current_balance),
+            'total_value': float(session.current_balance),  # Simplified - should add position values
+            'total_pnl': float(session.total_pnl),
+            'realized_pnl': float(session.total_pnl),
+            'unrealized_pnl': 0.0,
+            'positions': [],  # TODO: Get actual positions from database
+            'updated_at': time.time(),
+            'initial_capital': float(session.starting_balance)
+        }
         
-        portfolio = PortfolioSummary(
-            session_id=session.id,
-            cash_balance=cash_balance,
-            total_value=total_value,
-            total_pnl=total_pnl,
-            total_pnl_percent=total_pnl_percent,
-            positions=[],  # TODO: Get actual positions from database
-            position_count=0,  # TODO: Count actual positions
-            updated_at=time.time()
-        )
-        return portfolio.dict()
+        portfolio_data = SessionMapper.map_portfolio_data(raw_portfolio, str(session.id))
+        return SessionMapper.create_api_response(portfolio_data)
+        
     except Exception as e:
         logger.error("Failed to get portfolio data", session_id=session_id, error=str(e))
         return {}
@@ -92,31 +93,25 @@ async def get_metrics_data(session_id: str, current_user: User) -> dict:
         if not session:
             return {}
         
-        # Build metrics from session data
-        total_pnl = float(session.total_pnl)
-        initial_balance = float(session.starting_balance)
-        total_pnl_percent = (total_pnl / initial_balance * 100) if initial_balance > 0 else 0.0
+        # Use SessionMapper to create standardized metrics data
+        raw_metrics = {
+            'session_id': str(session.id),
+            'total_trades': session.total_trades,
+            'winning_trades': session.winning_trades,
+            'losing_trades': session.losing_trades,
+            'win_rate': float(session.win_rate),
+            'total_pnl': float(session.total_pnl),
+            'total_pnl_percent': (float(session.total_pnl) / float(session.starting_balance) * 100) if float(session.starting_balance) > 0 else 0.0,
+            'max_drawdown': float(session.max_drawdown),
+            'max_drawdown_percent': float(session.max_drawdown),
+            'sharpe_ratio': float(session.sharpe_ratio) if session.sharpe_ratio else None,
+            'current_drawdown': 0.0,  # TODO: Calculate current drawdown
+            'updated_at': datetime.utcnow()
+        }
         
-        metrics = SessionMetrics(
-            session_id=session.id,
-            total_trades=session.total_trades,
-            winning_trades=session.winning_trades,
-            losing_trades=session.losing_trades,
-            win_rate=float(session.win_rate),
-            total_pnl=session.total_pnl,
-            total_pnl_percent=total_pnl_percent,
-            max_drawdown=session.max_drawdown,
-            max_drawdown_percent=float(session.max_drawdown),
-            sharpe_ratio=float(session.sharpe_ratio) if session.sharpe_ratio else None,
-            profit_factor=None,  # TODO: Calculate profit factor
-            average_trade_pnl=session.total_pnl / max(session.total_trades, 1),
-            largest_win=Decimal("0"),  # TODO: Get from trades data
-            largest_loss=Decimal("0"),  # TODO: Get from trades data
-            consecutive_wins=0,  # TODO: Calculate from trades sequence
-            consecutive_losses=0,  # TODO: Calculate from trades sequence
-            updated_at=datetime.utcnow()
-        )
-        return metrics.dict()
+        metrics_data = SessionMapper.map_metrics_data(raw_metrics, str(session.id))
+        return SessionMapper.create_api_response(metrics_data)
+        
     except Exception as e:
         logger.error("Failed to get metrics data", session_id=session_id, error=str(e))
         return {}
@@ -255,7 +250,14 @@ async def list_sessions(
             limit=limit,
             offset=offset
         )
-        return ListResponse.sessions_response([s.dict() for s in sessions], "Sessions retrieved successfully")
+        
+        # Use SessionMapper to standardize the response format
+        standardized_sessions = [
+            SessionMapper.create_api_response(SessionMapper.map_db_session_to_summary(session))
+            for session in sessions
+        ]
+        
+        return ListResponse.sessions_response(standardized_sessions, "Sessions retrieved successfully")
         
     except Exception as e:
         logger.error("Failed to list sessions", error=str(e))
@@ -285,8 +287,11 @@ async def get_session(
         metrics = await get_metrics_data(session_id, current_user)
         trades = await get_trades_data(session_id, current_user)
         
+        # Use SessionMapper to create standardized session detail
+        session_detail = SessionMapper.map_db_session_to_detail(session, portfolio, metrics)
+        
         return SessionDetailResponse.create(
-            session=session,
+            session=SessionMapper.create_api_response(session_detail),
             portfolio=portfolio,
             metrics=metrics,
             trades=trades

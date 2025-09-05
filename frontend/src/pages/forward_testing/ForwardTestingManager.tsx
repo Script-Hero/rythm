@@ -31,29 +31,9 @@ const ForwardTestingManager = () => {
   const [statusFilter, setStatusFilter] = useState<SessionStatusFilter>('ALL');
   const [loading, setLoading] = useState(true);
 
-  // Convert context sessions to ForwardTestSession format  
-  const formattedSessions = React.useMemo(() => {    
-    return (sessions || []).map((s) => ({
-      testId: s.testId,
-      name: s.name,
-      strategyName: s.strategyName,
-      status: s.status,
-      startTime: s.startTime,
-      isActive: s.isActive,
-      settings: s.settings,
-      symbol: s.symbol,
-      timeframe: s.timeframe,
-      portfolioValue: s.portfolioValue,
-      initialBalance: s.portfolioValue,
-      totalTrades: s.totalTrades,
-      pnlPercent: s.pnlPercent,
-      pnlDollar: s.pnlDollar,
-      maxDrawdown: s.maxDrawdown,
-      winRate: s.winRate,
-      currentPrice: s.currentPrice || 0,
-      runtime: s.startTime ? calculateRuntime(s.startTime) : 0
-    }));
-  }, [sessions]);
+  // Sessions from context are already in ForwardTestSession format (snake_case)
+  // No conversion needed - pass them directly
+  const formattedSessions = sessions || [];
 
   // Set loading to false when context data is available
   useEffect(() => {
@@ -68,9 +48,9 @@ const ForwardTestingManager = () => {
   }, [formattedSessions])
 
   const filteredSessions = formattedSessions.filter(session => {
-    const sessionName = session.name || `${session.strategyName} Test`;
+    const sessionName = session.session_name || `${session.strategy_name} Test`;
     const matchesSearch = sessionName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                         session.strategyName.toLowerCase().includes(searchTerm.toLowerCase());
+                         session.strategy_name.toLowerCase().includes(searchTerm.toLowerCase());
     const matchesStatus = statusFilter === 'ALL' || session.status === statusFilter;
     return matchesSearch && matchesStatus;
   });
@@ -174,7 +154,7 @@ const ForwardTestingManager = () => {
       <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6">
         {filteredSessions.map((session) => (
           <SessionCard
-            key={session.testId}
+            key={session.session_id}
             session={session}
             onView={handleViewSession}
             onAction={handleSessionAction}

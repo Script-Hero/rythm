@@ -545,6 +545,7 @@ class ApiService {
     const bePayload = {
       strategy_id: strategyId,
       symbol: settings.symbol,
+      timeframe: settings.timeframe || '1m',
       starting_balance: Number(settings.initialBalance),
       max_position_size_percent,
       commission_rate,

@@ -143,23 +143,24 @@ const SessionDetailView = () => {
         const sessionData = detail.session;
         const settings = sessionData.settings || {};
 
+        // Use standardized field names from backend - no more field mapping needed
         setSession({
-          id: sessionData.id || sessionId,
-          name: sessionData.session_name || sessionData.name || `${sessionData.strategy_name || 'Unknown'} Test`,
+          id: sessionData.session_id || sessionId,
+          name: sessionData.session_name || `${sessionData.strategy_name || 'Unknown'} Test`,
           strategyName: sessionData.strategy_name || 'Unknown Strategy',
           strategy: { name: sessionData.strategy_name || 'Unknown Strategy' },
           status: sessionData.status || 'STOPPED',
           startTime: new Date(sessionData.started_at || sessionData.created_at || Date.now()),
           symbol: sessionData.symbol || 'BTC/USD',
-          timeframe: sessionData.timeframe || '1m',
-          portfolioValue: parseFloat(sessionData.current_portfolio_value || sessionData.initial_balance || sessionData.current_balance || sessionData.starting_balance || 10000),
+          timeframe: sessionData.timeframe, // Trust backend data for timeframe
+          portfolioValue: parseFloat(sessionData.current_portfolio_value || sessionData.initial_balance || 10000),
           totalTrades: sessionData.total_trades || 0,
           pnlPercent: parseFloat(sessionData.total_return || 0),
-          pnlDollar: parseFloat(sessionData.realized_pnl || sessionData.total_pnl || 0),
+          pnlDollar: parseFloat(sessionData.total_pnl || 0),
           maxDrawdown: parseFloat(sessionData.max_drawdown || 0),
           winRate: parseFloat(sessionData.win_rate || 0),
           settings: {
-            initialBalance: parseFloat(sessionData.initial_balance || sessionData.starting_balance || 10000),
+            initialBalance: parseFloat(sessionData.initial_balance || 10000),
             ...settings
           }
         });
@@ -172,7 +173,7 @@ const SessionDetailView = () => {
               positions: detail.portfolio.positions || [],
               totalValue: parseFloat(detail.portfolio.total_value ?? prev.portfolio.totalValue),
               unrealizedPnL: parseFloat(detail.portfolio.unrealized_pnl ?? 0),
-              realizedPnL: parseFloat(detail.portfolio.realized_pnl ?? detail.portfolio.total_pnl ?? 0)
+              realizedPnL: parseFloat(detail.portfolio.realized_pnl ?? 0)
             }
           }));
         }
@@ -194,7 +195,7 @@ const SessionDetailView = () => {
           setState(prev => ({
             ...prev,
             trades: detail.trades.map((trade: any) => ({
-              id: trade.id || `trade_${Date.now()}`,
+              id: trade.trade_id || trade.id || `trade_${Date.now()}`,
               symbol: trade.symbol || 'UNKNOWN',
               side: trade.side as 'BUY' | 'SELL',
               quantity: trade.quantity || 0,
@@ -292,30 +293,30 @@ const SessionDetailView = () => {
   useEffect(() => {
     if (!sessionId) return;
     
-    // Find the session in context
-    const contextSession = (sessions || []).find(s => s.testId === sessionId);
+    // Find the session in context using session_id
+    const contextSession = (sessions || []).find(s => s.session_id === sessionId);
     
     if (contextSession) {
       // If no local session exists, create it from context data
       if (!session) {
         console.log(`🔄 [SessionDetail-${sessionId}] Creating session from context data`);
         setSession({
-          id: contextSession.testId,
-          name: contextSession.name,
-          strategyName: contextSession.strategyName,
-          strategy: { name: contextSession.strategyName },
+          id: contextSession.session_id,
+          name: contextSession.session_name,
+          strategyName: contextSession.strategy_name,
+          strategy: { name: contextSession.strategy_name },
           status: contextSession.status,
-          startTime: contextSession.startTime,
+          startTime: new Date(contextSession.start_time),
           symbol: contextSession.symbol,
           timeframe: contextSession.timeframe,
-          portfolioValue: contextSession.portfolioValue,
-          totalTrades: contextSession.totalTrades,
-          pnlPercent: contextSession.pnlPercent,
-          pnlDollar: contextSession.pnlDollar,
-          maxDrawdown: contextSession.maxDrawdown,
-          winRate: contextSession.winRate,
+          portfolioValue: contextSession.current_portfolio_value,
+          totalTrades: contextSession.total_trades,
+          pnlPercent: contextSession.total_return,
+          pnlDollar: contextSession.total_pnl,
+          maxDrawdown: contextSession.max_drawdown,
+          winRate: contextSession.win_rate,
           settings: contextSession.settings,
-          isActive: contextSession.isActive
+          isActive: contextSession.is_active
         });
         
         // Get additional data from context stores
@@ -328,15 +329,15 @@ const SessionDetailView = () => {
           ...prev,
           portfolio: contextPortfolio || {
             ...prev.portfolio,
-            totalValue: contextSession.portfolioValue,
-            cash: contextSession.initialBalance || contextSession.portfolioValue || 10000
+            totalValue: contextSession.current_portfolio_value,
+            cash: contextSession.initial_balance || contextSession.current_portfolio_value || 10000
           },
           metrics: contextMetrics || {
             ...prev.metrics,
-            totalReturn: contextSession.pnlPercent,
-            maxDrawdown: contextSession.maxDrawdown,
-            winRate: contextSession.winRate,
-            totalTrades: contextSession.totalTrades,
+            totalReturn: contextSession.total_return,
+            maxDrawdown: contextSession.max_drawdown,
+            winRate: contextSession.win_rate,
+            totalTrades: contextSession.total_trades,
             currentDrawdown: prev.metrics.currentDrawdown,
             sharpeRatio: prev.metrics.sharpeRatio
           },
@@ -347,24 +348,24 @@ const SessionDetailView = () => {
       } 
       // If local session exists, sync any changes from context
       else if (contextSession.status !== session.status || 
-               contextSession.portfolioValue !== session.portfolioValue ||
-               contextSession.totalTrades !== session.totalTrades ||
-               contextSession.pnlPercent !== session.pnlPercent ||
-               contextSession.pnlDollar !== session.pnlDollar ||
-               contextSession.maxDrawdown !== session.maxDrawdown ||
-               contextSession.winRate !== session.winRate) {
+               contextSession.current_portfolio_value !== session.portfolioValue ||
+               contextSession.total_trades !== session.totalTrades ||
+               contextSession.total_return !== session.pnlPercent ||
+               contextSession.total_pnl !== session.pnlDollar ||
+               contextSession.max_drawdown !== session.maxDrawdown ||
+               contextSession.win_rate !== session.winRate) {
         
         console.log(`🔄 [SessionDetail-${sessionId}] Syncing context updates to local state`);
         setSession(prev => ({
           ...prev!,
           status: contextSession.status,
-          portfolioValue: contextSession.portfolioValue,
-          totalTrades: contextSession.totalTrades,
-          pnlPercent: contextSession.pnlPercent,
-          pnlDollar: contextSession.pnlDollar,
-          maxDrawdown: contextSession.maxDrawdown,
-          winRate: contextSession.winRate,
-          isActive: contextSession.isActive
+          portfolioValue: contextSession.current_portfolio_value,
+          totalTrades: contextSession.total_trades,
+          pnlPercent: contextSession.total_return,
+          pnlDollar: contextSession.total_pnl,
+          maxDrawdown: contextSession.max_drawdown,
+          winRate: contextSession.win_rate,
+          isActive: contextSession.is_active
         }));
         
         // Get updated data from context stores
@@ -377,14 +378,14 @@ const SessionDetailView = () => {
           ...prev,
           portfolio: contextPortfolio || {
             ...prev.portfolio,
-            totalValue: contextSession.portfolioValue
+            totalValue: contextSession.current_portfolio_value
           },
           metrics: contextMetrics || {
             ...prev.metrics,
-            totalReturn: contextSession.pnlPercent,
-            maxDrawdown: contextSession.maxDrawdown,
-            winRate: contextSession.winRate,
-            totalTrades: contextSession.totalTrades,
+            totalReturn: contextSession.total_return,
+            maxDrawdown: contextSession.max_drawdown,
+            winRate: contextSession.win_rate,
+            totalTrades: contextSession.total_trades,
             currentDrawdown: prev.metrics.currentDrawdown,
             sharpeRatio: prev.metrics.sharpeRatio
           },

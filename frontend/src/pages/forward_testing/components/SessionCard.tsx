@@ -39,15 +39,21 @@ export const SessionCard: React.FC<SessionCardProps> = ({
   onView,
   onAction,
 }) => {
-  const sessionId = session.testId; // Use testId for consistency with context
+  const sessionId = session.session_id; // Use session_id from standardized ForwardTestSession type
+  
+  // Guard against undefined values that cause toFixed() errors - use standardized field names
+  const safePnlPercent = typeof session.total_return === 'number' ? session.total_return : 0;
+  const safePnlDollar = typeof session.total_pnl === 'number' ? session.total_pnl : 0;
+  const safeWinRate = typeof session.win_rate === 'number' ? session.win_rate : 0;
+  const safeMaxDrawdown = typeof session.max_drawdown === 'number' ? session.max_drawdown : 0;
   
   // Debug logging to identify undefined sessionId issue
   if (!sessionId) {
-    console.warn('SessionCard: sessionId is undefined', { session, id: session.id });
+    console.warn('SessionCard: sessionId is undefined', { session, session_id: session.session_id });
   }
-  const sessionName = session.name || `${session.strategyName} Test`;
+  const sessionName = session.session_name || `${session.strategy_name} Test`;
   const runtime = session.status === 'RUNNING' || session.status === 'PAUSED'
-    ? Math.floor((Date.now() - session.startTime.getTime()) / 1000)
+    ? Math.floor((Date.now() - new Date(session.start_time).getTime()) / 1000)
     : (session.runtime || 0);
 
   // Utility functions now imported from utils
@@ -59,7 +65,7 @@ export const SessionCard: React.FC<SessionCardProps> = ({
           <div className="flex-1">
             <CardTitle className="text-lg truncate">{sessionName}</CardTitle>
             <p className="text-sm text-muted-foreground truncate">
-              {session.strategyName}
+              {session.strategy_name}
             </p>
           </div>
           <DropdownMenu>
@@ -121,19 +127,19 @@ export const SessionCard: React.FC<SessionCardProps> = ({
         <div className="grid grid-cols-2 gap-4 text-sm">
           <div>
             <p className="text-muted-foreground">P&L</p>
-            <p className={`font-semibold ${getPnLColor(session.pnlPercent)}`}>
-              {session.pnlPercent >= 0 ? '+' : ''}{session.pnlPercent.toFixed(2)}%
+            <p className={`font-semibold ${getPnLColor(safePnlPercent)}`}>
+              {safePnlPercent >= 0 ? '+' : ''}{safePnlPercent.toFixed(2)}%
             </p>
-            <p className={`text-xs ${getPnLColor(session.pnlDollar)}`}>
-              {formatCurrency(session.pnlDollar)}
+            <p className={`text-xs ${getPnLColor(safePnlDollar)}`}>
+              {formatCurrency(safePnlDollar)}
             </p>
           </div>
           
           <div>
             <p className="text-muted-foreground">Trades</p>
-            <p className="font-semibold">{session.totalTrades}</p>
+            <p className="font-semibold">{session.total_trades}</p>
             <p className="text-xs text-muted-foreground">
-              {session.winRate.toFixed(1)}% wins
+              {safeWinRate.toFixed(1)}% wins
             </p>
           </div>
         </div>
@@ -147,12 +153,9 @@ export const SessionCard: React.FC<SessionCardProps> = ({
           
           <div>
             <p className="text-muted-foreground">Portfolio</p>
-            <p className="font-semibold">{formatCurrency(session.portfolioValue || session.initialBalance || 10000)}</p>
+            <p className="font-semibold">{formatCurrency(session.current_portfolio_value || session.initial_balance || 10000)}</p>
             <p className="text-xs text-muted-foreground">
-              {(() => {
-                const maxDD = Number.isFinite(Number(session.maxDrawdown)) ? Number(session.maxDrawdown) : 0;
-                return `Max DD: ${maxDD.toFixed(1)}%`;
-              })()}
+              Max DD: {safeMaxDrawdown.toFixed(1)}%
             </p>
           </div>
         </div>

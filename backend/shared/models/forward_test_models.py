@@ -42,6 +42,7 @@ class ForwardTestSessionCreate(BaseModel):
     """Create forward testing session request."""
     strategy_id: UUID
     symbol: str
+    timeframe: str = Field(default="1m")
     starting_balance: Decimal = Field(default=Decimal("100000.0"))
     max_position_size_percent: float = Field(default=0.25, ge=0.01, le=1.0)
     commission_rate: float = Field(default=0.001, ge=0.0, le=0.1)

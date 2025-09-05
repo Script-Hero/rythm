@@ -266,10 +266,14 @@ async def get_backtest_summary(
 # Helper functions
 
 async def _verify_session_ownership(db: AsyncSession, session_id: str, user_id: UUID):
-    """Verify that the user owns the forward test session."""
+    """
+    Verify that the user owns the forward test session.
+    Uses standardized session data access.
+    """
     from sqlalchemy import select
     from .models import ForwardTestSession
     
+    # Try to find by session_id (external UUID string) or internal ID
     result = await db.execute(
         select(ForwardTestSession.user_id)
         .where(ForwardTestSession.session_id == session_id)

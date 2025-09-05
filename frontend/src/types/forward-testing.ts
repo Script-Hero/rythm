@@ -2,74 +2,83 @@
 // Multi-session architecture supporting concurrent testing sessions
 
 export interface ForwardTestSession {
-  testId: string; // Primary identifier for session
-  name: string;
-  strategyName: string;
+  session_id: string; // Primary identifier for session (standardized from testId)
+  session_name: string;
+  strategy_name: string;
   status: 'RUNNING' | 'PAUSED' | 'STOPPED' | 'ERROR';
-  startTime: Date;
-  endTime?: Date;
-  isActive: boolean;
+  start_time: Date;
+  end_time?: Date;
+  is_active: boolean;
   settings: ForwardTestSettings;
   symbol: string;
   timeframe: string;
-  portfolioValue: number;
-  initialBalance: number;
-  totalTrades: number;
-  pnlPercent: number;
-  pnlDollar: number;
-  maxDrawdown: number;
-  winRate: number;
-  currentPrice?: number;
+  current_portfolio_value: number;
+  initial_balance: number;
+  total_trades: number;
+  total_return: number; // percentage (standardized from pnlPercent)
+  total_pnl: number; // dollar amount (standardized from pnlDollar) 
+  max_drawdown: number;
+  win_rate: number;
+  current_price?: number;
   runtime?: number;
 }
 
 export interface Portfolio {
-  cash: number;
+  cash_balance: number;
   positions: Position[];
   total_value: number;
   unrealized_pnl: number;
   realized_pnl: number;
+  total_pnl: number;
+  total_pnl_percent: number;
+  position_count: number;
+  updated_at: number;
 }
 
 export interface Position {
   symbol: string;
   quantity: number;
-  avg_price: number;
-  current_value: number;
+  average_price: number;
+  current_price: number;
+  market_value: number;
   unrealized_pnl?: number;
+  unrealized_pnl_percent?: number;
+  last_updated: number;
 }
 
 export interface Metrics {
   total_return: number;
   sharpe_ratio: number;
   max_drawdown: number;
+  max_drawdown_percent: number;
   win_rate: number;
   total_trades: number;
+  winning_trades: number;
+  losing_trades: number;
   current_drawdown: number;
-  profit_factor?: number;
-  avg_win?: number;
-  avg_loss?: number;
-  consecutive_wins?: number;
-  consecutive_losses?: number;
+  total_pnl: number;
+  total_pnl_percent: number;
+  updated_at?: string;
 }
 
 export interface Trade {
-  id: string;
-  sessionId: string; // Links trade to specific session
+  trade_id: string;
+  session_id: string; // Links trade to specific session
   symbol: string;
   side: 'BUY' | 'SELL';
   quantity: number;
   price: number;
-  timestamp: Date | string | number;
+  timestamp: number;
   pnl?: number;
-  status: 'OPEN' | 'CLOSED';
-  commission?: number;
-  slippage?: number;
+  pnl_percent?: number;
+  status: string;
+  fee?: number;
+  total_cost?: number;
 }
 
 export interface Alert {
   id: string;
-  sessionId: string; // Links alert to specific session
+  session_id: string; // Links alert to specific session
   type: 'INFO' | 'WARNING' | 'ERROR' | 'SUCCESS';
   message: string;
   timestamp: Date | string | number;
@@ -95,7 +104,7 @@ export interface ForwardTestSettings {
 // Chart data types for multi-session support
 export interface ChartDataPoint {
   time: string;
-  sessionId: string; // Session identifier for multi-session support
+  session_id: string; // Session identifier for multi-session support
 }
 
 export interface PriceDataPoint extends ChartDataPoint {
@@ -152,12 +161,15 @@ export interface PortfolioUpdateEvent extends WebSocketEvent {
   type: 'PORTFOLIO_UPDATE';
   portfolio: {
     total_value: number;
-    cash: number;
+    cash_balance: number;
     positions: Record<string, unknown>;
+    realized_pnl: number;
+    unrealized_pnl: number;
   };
   metrics: {
     total_trades: number;
-    return_percentage?: number;
+    winning_trades?: number;
+    losing_trades?: number;
     total_return?: number;
     max_drawdown: number;
     win_rate: number;

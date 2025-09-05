@@ -29,6 +29,7 @@ sys.path.append(os.path.join(os.path.dirname(__file__), '../../..'))
 
 from shared.models.forward_test_models import SessionStatus
 from shared.kafka_client import KafkaProducer, Topics
+from shared.utils.session_mapper import SessionMapper
 
 # Set decimal precision for financial calculations
 getcontext().prec = 10
@@ -307,32 +308,35 @@ class PortfolioManager:
             
             portfolio = self.portfolios[session_id]
             
-            # Get position summaries
-            position_summaries = []
-            for symbol, position in portfolio.positions.items():
-                position_summaries.append({
-                    "symbol": symbol,
-                    "quantity": float(position.quantity),
-                    "average_price": float(position.average_price),
-                    "current_price": float(position.current_price),
-                    "market_value": float(position.market_value),
-                    "unrealized_pnl": float(position.unrealized_pnl),
-                    "unrealized_pnl_percent": float(position.unrealized_pnl_percent),
-                    "last_updated": position.last_updated
-                })
-            
-            return {
-                "session_id": str(session_id),
-                "cash_balance": float(portfolio.cash_balance),
-                "total_value": float(portfolio.total_value),
-                "total_pnl": float(portfolio.total_pnl),
-                "total_pnl_percent": float(portfolio.total_pnl_percent),
-                "positions": position_summaries,
-                "position_count": len(portfolio.positions),
-                "trade_count": portfolio.trade_count,
-                "last_updated": portfolio.last_updated,
-                "initial_capital": float(portfolio.initial_capital)
+            # Use SessionMapper to create standardized portfolio summary
+            raw_portfolio = {
+                'session_id': str(session_id),
+                'cash_balance': float(portfolio.cash_balance),
+                'total_value': float(portfolio.total_value),
+                'total_pnl': float(portfolio.total_pnl),
+                'total_pnl_percent': float(portfolio.total_pnl_percent),
+                'realized_pnl': float(portfolio.total_pnl),  # Simplified for now
+                'unrealized_pnl': 0.0,  # TODO: Calculate from positions
+                'trade_count': portfolio.trade_count,  # Add missing trade_count field
+                'positions': [
+                    {
+                        "symbol": symbol,
+                        "quantity": float(position.quantity),
+                        "average_price": float(position.average_price),
+                        "current_price": float(position.current_price),
+                        "market_value": float(position.market_value),
+                        "unrealized_pnl": float(position.unrealized_pnl),
+                        "unrealized_pnl_percent": float(position.unrealized_pnl_percent),
+                        "last_updated": position.last_updated
+                    }
+                    for symbol, position in portfolio.positions.items()
+                ],
+                'updated_at': portfolio.last_updated,
+                'initial_capital': float(portfolio.initial_capital)
             }
+            
+            portfolio_data = SessionMapper.map_portfolio_data(raw_portfolio, str(session_id))
+            return SessionMapper.create_api_response(portfolio_data)
             
         except Exception as e:
             logger.error("Failed to get portfolio summary", 
@@ -358,8 +362,10 @@ class PortfolioManager:
             trades = []
             for trade_json, timestamp in trade_data:
                 try:
-                    trade_dict = json.loads(trade_json)
-                    trades.append(trade_dict)
+                    raw_trade = json.loads(trade_json)
+                    # Use SessionMapper to standardize trade data
+                    trade_data = SessionMapper.map_trade_data(raw_trade)
+                    trades.append(SessionMapper.create_api_response(trade_data))
                 except json.JSONDecodeError:
                     continue
             
