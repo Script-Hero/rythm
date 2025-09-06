@@ -23,6 +23,7 @@ import { ChartsGrid } from './components/ChartsGrid';
 import { TradeAlerts } from './components/TradeAlerts';
 import { PerformanceStats } from './components/PerformanceStats';
 import { ForwardTestHeader } from './components/ForwardTestHeader';
+import type { Metrics } from '@/types/forward-testing';
 
 interface SessionDetailState {
   currentPrice: number;
@@ -39,14 +40,7 @@ interface SessionDetailState {
     unrealizedPnL: number;
     realizedPnL: number;
   };
-  metrics: {
-    totalReturn: number;
-    sharpeRatio: number;
-    maxDrawdown: number;
-    winRate: number;
-    totalTrades: number;
-    currentDrawdown: number;
-  };
+  metrics: Metrics;
   trades: Array<{
     id: string;
     symbol: string;
@@ -114,13 +108,18 @@ const SessionDetailView = () => {
       realizedPnL: 0,
     },
     metrics: {
-      totalReturn: 0,
-      sharpeRatio: 0,
-      maxDrawdown: 0,
-      winRate: 0,
-      totalTrades: 0,
-      currentDrawdown: 0,
-    },
+      total_return: 0,
+      sharpe_ratio: 0,
+      max_drawdown: 0,
+      max_drawdown_percent: 0,
+      win_rate: 0,
+      total_trades: 0,
+      winning_trades: 0,
+      losing_trades: 0,
+      current_drawdown: 0,
+      total_pnl: 0,
+      total_pnl_percent: 0,
+    } as Metrics,
     trades: [],
     alerts: [],
   });
@@ -183,12 +182,17 @@ const SessionDetailView = () => {
         setState(prev => ({
           ...prev,
           metrics: {
-            totalReturn: parseFloat(m.total_return ?? sessionData.total_return ?? 0),
-            sharpeRatio: parseFloat(m.sharpe_ratio ?? sessionData.sharpe_ratio ?? 0),
-            maxDrawdown: parseFloat(m.max_drawdown ?? sessionData.max_drawdown ?? 0),
-            winRate: parseFloat(m.win_rate ?? sessionData.win_rate ?? 0),
-            totalTrades: m.total_trades ?? sessionData.total_trades ?? 0,
-            currentDrawdown: parseFloat(m.current_drawdown ?? 0)
+            total_return: parseFloat(m.total_return ?? sessionData.total_return ?? 0),
+            sharpe_ratio: parseFloat(m.sharpe_ratio ?? sessionData.sharpe_ratio ?? 0),
+            max_drawdown: parseFloat(m.max_drawdown ?? sessionData.max_drawdown ?? 0),
+            max_drawdown_percent: parseFloat(m.max_drawdown_percent ?? 0),
+            win_rate: parseFloat(m.win_rate ?? sessionData.win_rate ?? 0),
+            total_trades: m.total_trades ?? sessionData.total_trades ?? 0,
+            winning_trades: m.winning_trades ?? 0,
+            losing_trades: m.losing_trades ?? 0,
+            current_drawdown: parseFloat(m.current_drawdown ?? 0),
+            total_pnl: parseFloat(m.total_pnl ?? 0),
+            total_pnl_percent: parseFloat(m.total_pnl_percent ?? 0),
           }
         }));
 
@@ -255,14 +259,7 @@ const SessionDetailView = () => {
           unrealizedPnL: p.unrealizedPnL,
           realizedPnL: p.realizedPnL,
         } : prev.portfolio,
-        metrics: m ? {
-          totalReturn: m.totalReturn,
-          sharpeRatio: m.sharpeRatio,
-          maxDrawdown: m.maxDrawdown,
-          winRate: m.winRate,
-          totalTrades: m.totalTrades,
-          currentDrawdown: m.currentDrawdown,
-        } : prev.metrics,
+        metrics: m ? { ...prev.metrics, ...m } as Metrics : prev.metrics,
       }));
     }
     // Trades list
@@ -335,13 +332,11 @@ const SessionDetailView = () => {
           },
           metrics: contextMetrics || {
             ...prev.metrics,
-            totalReturn: contextSession.total_return,
-            maxDrawdown: contextSession.max_drawdown,
-            winRate: contextSession.win_rate,
-            totalTrades: contextSession.total_trades,
-            currentDrawdown: prev.metrics.currentDrawdown,
-            sharpeRatio: prev.metrics.sharpeRatio
-          },
+            total_return: contextSession.total_return,
+            max_drawdown: contextSession.max_drawdown,
+            win_rate: contextSession.win_rate,
+            total_trades: contextSession.total_trades,
+          } as Metrics,
           trades: contextTrades || prev.trades
         }));
         
@@ -383,13 +378,11 @@ const SessionDetailView = () => {
           },
           metrics: contextMetrics || {
             ...prev.metrics,
-            totalReturn: contextSession.total_return,
-            maxDrawdown: contextSession.max_drawdown,
-            winRate: contextSession.win_rate,
-            totalTrades: contextSession.total_trades,
-            currentDrawdown: prev.metrics.currentDrawdown,
-            sharpeRatio: prev.metrics.sharpeRatio
-          },
+            total_return: contextSession.total_return,
+            max_drawdown: contextSession.max_drawdown,
+            win_rate: contextSession.win_rate,
+            total_trades: contextSession.total_trades,
+          } as Metrics,
           trades: contextTrades || prev.trades
         }));
       }

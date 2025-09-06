@@ -2,15 +2,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Progress } from '@/components/ui/progress';
 import { Badge } from '@/components/ui/badge';
 import { TrendingUp, TrendingDown, Target, Activity, Award, AlertTriangle } from 'lucide-react';
-
-interface Metrics {
-  totalReturn: number;
-  sharpeRatio: number;
-  maxDrawdown: number;
-  winRate: number;
-  totalTrades: number;
-  currentDrawdown: number;
-}
+import type { Metrics } from '@/types/forward-testing';
 
 interface PerformanceStatsProps {
   metrics: Metrics;
@@ -46,9 +38,9 @@ export const PerformanceStats = ({ metrics }: PerformanceStatsProps) => {
     }
   };
 
-  const sharpeRating = getPerformanceRating('sharpe', metrics.sharpeRatio);
-  const winRateRating = getPerformanceRating('winRate', metrics.winRate);
-  const drawdownRating = getPerformanceRating('drawdown', metrics.maxDrawdown);
+  const sharpeRating = getPerformanceRating('sharpe', metrics.sharpe_ratio);
+  const winRateRating = getPerformanceRating('winRate', metrics.win_rate);
+  const drawdownRating = getPerformanceRating('drawdown', metrics.max_drawdown);
 
   return (
     <div className="space-y-6">
@@ -63,11 +55,11 @@ export const PerformanceStats = ({ metrics }: PerformanceStatsProps) => {
         <CardContent>
           <div className="text-center">
             <div className="text-3xl font-bold mb-2">
-              {Math.max(0, 50 + metrics.sharpeRatio * 15 + metrics.winRate * 0.3 - Math.abs(metrics.maxDrawdown) * 2).toFixed(0)}
+              {Math.max(0, 50 + metrics.sharpe_ratio * 15 + metrics.win_rate * 0.3 - Math.abs(metrics.max_drawdown) * 2).toFixed(0)}
             </div>
             <div className="text-sm text-muted-foreground mb-4">Overall Score (0-100)</div>
             <Progress 
-              value={Math.max(0, 50 + metrics.sharpeRatio * 15 + metrics.winRate * 0.3 - Math.abs(metrics.maxDrawdown) * 2)}
+              value={Math.max(0, 50 + metrics.sharpe_ratio * 15 + metrics.win_rate * 0.3 - Math.abs(metrics.max_drawdown) * 2)}
               className="h-3"
             />
           </div>
@@ -86,7 +78,7 @@ export const PerformanceStats = ({ metrics }: PerformanceStatsProps) => {
           {/* Total Return */}
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
-              {metrics.totalReturn >= 0 ? (
+              {metrics.total_return >= 0 ? (
                 <TrendingUp className="h-4 w-4 text-green-600" />
               ) : (
                 <TrendingDown className="h-4 w-4 text-red-600" />
@@ -94,8 +86,8 @@ export const PerformanceStats = ({ metrics }: PerformanceStatsProps) => {
               <span className="text-sm font-medium">Total Return</span>
             </div>
             <div className="text-right">
-              <div className={`font-bold ${metrics.totalReturn >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                {formatPercentage(metrics.totalReturn)}
+              <div className={`font-bold ${metrics.total_return >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                {formatPercentage(metrics.total_return)}
               </div>
             </div>
           </div>
@@ -111,7 +103,7 @@ export const PerformanceStats = ({ metrics }: PerformanceStatsProps) => {
                 {sharpeRating.rating}
               </Badge>
               <div className="font-bold">
-                {metrics.sharpeRatio.toFixed(2)}
+                {metrics.sharpe_ratio.toFixed(2)}
               </div>
             </div>
           </div>
@@ -127,7 +119,7 @@ export const PerformanceStats = ({ metrics }: PerformanceStatsProps) => {
                 {winRateRating.rating}
               </Badge>
               <div className="font-bold">
-                {formatPercentage(metrics.winRate)}
+                {formatPercentage(metrics.win_rate)}
               </div>
             </div>
           </div>
@@ -143,7 +135,7 @@ export const PerformanceStats = ({ metrics }: PerformanceStatsProps) => {
                 {drawdownRating.rating}
               </Badge>
               <div className="font-bold text-red-600">
-                {formatPercentage(metrics.maxDrawdown)}
+                {formatPercentage(metrics.max_drawdown)}
               </div>
             </div>
           </div>
@@ -155,8 +147,8 @@ export const PerformanceStats = ({ metrics }: PerformanceStatsProps) => {
               <span className="text-sm font-medium">Current Drawdown</span>
             </div>
             <div className="text-right">
-              <div className={`font-bold ${Math.abs(metrics.currentDrawdown) > 5 ? 'text-red-600' : 'text-orange-600'}`}>
-                {formatPercentage(metrics.currentDrawdown)}
+              <div className={`font-bold ${Math.abs(metrics.current_drawdown) > 5 ? 'text-red-600' : 'text-orange-600'}`}>
+                {formatPercentage(metrics.current_drawdown)}
               </div>
             </div>
           </div>
@@ -169,7 +161,7 @@ export const PerformanceStats = ({ metrics }: PerformanceStatsProps) => {
             </div>
             <div className="text-right">
               <div className="font-bold">
-                {metrics.totalTrades}
+                {metrics.total_trades}
               </div>
             </div>
           </div>
@@ -189,16 +181,16 @@ export const PerformanceStats = ({ metrics }: PerformanceStatsProps) => {
             <div className="flex items-center justify-between text-sm">
               <span>Risk Level</span>
               <Badge className={
-                Math.abs(metrics.maxDrawdown) < 5 ? 'bg-green-100 text-green-800' :
-                Math.abs(metrics.maxDrawdown) < 10 ? 'bg-yellow-100 text-yellow-800' :
+                Math.abs(metrics.max_drawdown) < 5 ? 'bg-green-100 text-green-800' :
+                Math.abs(metrics.max_drawdown) < 10 ? 'bg-yellow-100 text-yellow-800' :
                 'bg-red-100 text-red-800'
               }>
-                {Math.abs(metrics.maxDrawdown) < 5 ? 'Low' :
-                 Math.abs(metrics.maxDrawdown) < 10 ? 'Medium' : 'High'}
+                {Math.abs(metrics.max_drawdown) < 5 ? 'Low' :
+                 Math.abs(metrics.max_drawdown) < 10 ? 'Medium' : 'High'}
               </Badge>
             </div>
             <Progress 
-              value={Math.min(Math.abs(metrics.maxDrawdown) * 5, 100)} 
+              value={Math.min(Math.abs(metrics.max_drawdown) * 5, 100)} 
               className="h-2"
             />
           </div>

@@ -106,10 +106,10 @@ export const LiveMetricsDashboard = ({ portfolio, metrics, currentPrice, initial
             <div className="space-y-2">
               <div className="flex items-center justify-between">
                 <span className="text-sm text-muted-foreground">Sharpe Ratio</span>
-                <span className="font-medium">{(((metrics as any).sharpeRatio ?? (metrics as any).sharpe_ratio) || 0).toFixed(2)}</span>
+                <span className="font-medium">{(metrics.sharpe_ratio || 0).toFixed(2)}</span>
               </div>
               <Progress 
-                value={Math.min(Math.max(((((metrics as any).sharpeRatio ?? (metrics as any).sharpe_ratio) || 0) + 2) * 25, 0), 100)} 
+                value={Math.min(Math.max(((metrics.sharpe_ratio || 0) + 2) * 25, 0), 100)} 
                 className="h-2"
               />
             </div>
@@ -117,20 +117,20 @@ export const LiveMetricsDashboard = ({ portfolio, metrics, currentPrice, initial
             <div className="space-y-2">
               <div className="flex items-center justify-between">
                 <span className="text-sm text-muted-foreground">Win Rate</span>
-                <span className="font-medium">{formatPercentage(((metrics as any).winRate ?? (metrics as any).win_rate) || 0)}</span>
+                <span className="font-medium">{formatPercentage(metrics.win_rate || 0)}</span>
               </div>
-              <Progress value={((metrics as any).winRate ?? (metrics as any).win_rate) || 0} className="h-2" />
+              <Progress value={metrics.win_rate || 0} className="h-2" />
             </div>
 
             <div className="space-y-2">
               <div className="flex items-center justify-between">
                 <span className="text-sm text-muted-foreground">Max Drawdown</span>
-                <span className={`font-medium ${(((metrics as any).maxDrawdown ?? (metrics as any).max_drawdown) || 0) < -5 ? 'text-red-600' : 'text-yellow-600'}`}>
-                  {formatPercentage(((metrics as any).maxDrawdown ?? (metrics as any).max_drawdown) || 0)}
+                <span className={`font-medium ${(metrics.max_drawdown || 0) < -5 ? 'text-red-600' : 'text-yellow-600'}`}>
+                  {formatPercentage(metrics.max_drawdown || 0)}
                 </span>
               </div>
               <Progress 
-                value={Math.abs(((metrics as any).maxDrawdown ?? (metrics as any).max_drawdown) || 0)} 
+                value={Math.abs(metrics.max_drawdown || 0)} 
                 className="h-2"
               />
             </div>
@@ -138,12 +138,12 @@ export const LiveMetricsDashboard = ({ portfolio, metrics, currentPrice, initial
             <div className="space-y-2">
               <div className="flex items-center justify-between">
                 <span className="text-sm text-muted-foreground">Current Drawdown</span>
-                <span className={`font-medium ${(((metrics as any).currentDrawdown ?? (metrics as any).current_drawdown) || 0) < -3 ? 'text-red-600' : 'text-gray-600'}`}>
-                  {formatPercentage(((metrics as any).currentDrawdown ?? (metrics as any).current_drawdown) || 0)}
+                <span className={`font-medium ${(metrics.current_drawdown || 0) < -3 ? 'text-red-600' : 'text-gray-600'}`}>
+                  {formatPercentage(metrics.current_drawdown || 0)}
                 </span>
               </div>
               <Progress 
-                value={Math.abs(((metrics as any).currentDrawdown ?? (metrics as any).current_drawdown) || 0)} 
+                value={Math.abs(metrics.current_drawdown || 0)} 
                 className="h-2"
               />
             </div>
@@ -151,7 +151,7 @@ export const LiveMetricsDashboard = ({ portfolio, metrics, currentPrice, initial
             <div className="space-y-2">
               <div className="flex items-center justify-between">
                 <span className="text-sm text-muted-foreground">Total Trades</span>
-                <span className="font-medium">{((metrics as any).totalTrades ?? (metrics as any).total_trades) || 0}</span>
+                <span className="font-medium">{metrics.total_trades || 0}</span>
               </div>
             </div>
 

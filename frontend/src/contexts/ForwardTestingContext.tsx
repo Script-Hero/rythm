@@ -371,16 +371,21 @@ export const ForwardTestingProvider: React.FC<ForwardTestingProviderProps> = ({ 
       return [...prev, placeholder];
     });
 
-    // Increment trade counters in metrics and session list
+    // Increment trade counters in metrics and session list (snake_case only)
     setSessionMetrics(prev => {
-      const existing = prev[sessionId];
+      const existing = prev[sessionId] as Partial<Metrics> | undefined;
       const updated: Metrics = {
-        totalReturn: existing?.totalReturn ?? 0,
-        sharpeRatio: existing?.sharpeRatio ?? 0,
-        maxDrawdown: existing?.maxDrawdown ?? 0,
-        winRate: existing?.winRate ?? 0,
-        totalTrades: (existing?.totalTrades ?? 0) + 1,
-        currentDrawdown: existing?.currentDrawdown ?? 0
+        total_return: (existing?.total_return ?? 0) as number,
+        sharpe_ratio: (existing?.sharpe_ratio ?? 0) as number,
+        max_drawdown: (existing?.max_drawdown ?? 0) as number,
+        max_drawdown_percent: (existing?.max_drawdown_percent ?? 0) as number,
+        win_rate: (existing?.win_rate ?? 0) as number,
+        total_trades: ((existing?.total_trades ?? 0) as number) + 1,
+        winning_trades: (existing?.winning_trades ?? 0) as number,
+        losing_trades: (existing?.losing_trades ?? 0) as number,
+        current_drawdown: (existing?.current_drawdown ?? 0) as number,
+        total_pnl: (existing?.total_pnl ?? 0) as number,
+        total_pnl_percent: (existing?.total_pnl_percent ?? 0) as number,
       };
       return { ...prev, [sessionId]: updated };
     });
@@ -413,19 +418,19 @@ export const ForwardTestingProvider: React.FC<ForwardTestingProviderProps> = ({ 
       };
     });
     
-    // Update session metrics - standardized field names, merge only provided fields
+    // Update session metrics - use only canonical snake_case field names
     const candidate: Partial<Metrics> = {
-      total_return: metrics?.total_return ?? metrics?.return_percentage ?? metrics?.totalReturn,
-      sharpe_ratio: metrics?.sharpe_ratio ?? metrics?.sharpeRatio,
-      max_drawdown: metrics?.max_drawdown ?? metrics?.maxDrawdown,
-      max_drawdown_percent: metrics?.max_drawdown_percent ?? metrics?.max_drawdown ?? 0,
-      win_rate: metrics?.win_rate ?? metrics?.winRate,
-      total_trades: metrics?.total_trades ?? metrics?.totalTrades,
-      winning_trades: metrics?.winning_trades ?? 0,
-      losing_trades: metrics?.losing_trades ?? 0,
-      current_drawdown: metrics?.current_drawdown ?? metrics?.currentDrawdown,
-      total_pnl: metrics?.total_pnl ?? 0,
-      total_pnl_percent: metrics?.total_pnl_percent ?? 0
+      total_return: metrics?.total_return,
+      sharpe_ratio: metrics?.sharpe_ratio,
+      max_drawdown: metrics?.max_drawdown,
+      max_drawdown_percent: metrics?.max_drawdown_percent,
+      win_rate: metrics?.win_rate,
+      total_trades: metrics?.total_trades,
+      winning_trades: metrics?.winning_trades,
+      losing_trades: metrics?.losing_trades,
+      current_drawdown: metrics?.current_drawdown,
+      total_pnl: metrics?.total_pnl,
+      total_pnl_percent: metrics?.total_pnl_percent
     };
     const cleanMetrics = Object.fromEntries(
       Object.entries(candidate).filter(([, v]) => v !== undefined && v !== null)
@@ -464,7 +469,7 @@ export const ForwardTestingProvider: React.FC<ForwardTestingProviderProps> = ({ 
     updateChartData(sessionId, 'portfolio', portfolioData);
 
     // Append drawdown data point if available
-    const dd = (cleanMetrics as any).currentDrawdown;
+    const dd = (cleanMetrics as Partial<Metrics>).current_drawdown;
     if (typeof dd === 'number') {
       updateChartData(sessionId, 'drawdown', { time: new Date().toISOString(), sessionId, drawdown: dd });
     }
@@ -514,29 +519,32 @@ export const ForwardTestingProvider: React.FC<ForwardTestingProviderProps> = ({ 
   const handleMetricsUpdate = useCallback((event: any, sessionId: SessionIdentifier) => {
     const metricsData = event.metrics || event.data?.metrics || {};
     
-    // Handle field name variations and normalize to camelCase
+    // Use only canonical snake_case metrics
     const updatedMetrics: Partial<Metrics> = {
-      totalReturn: metricsData.return_percentage || metricsData.total_return || metricsData.totalReturn,
-      sharpeRatio: metricsData.sharpe_ratio || metricsData.sharpeRatio,
-      maxDrawdown: metricsData.max_drawdown || metricsData.maxDrawdown,
-      winRate: metricsData.win_rate || metricsData.winRate,
-      totalTrades: metricsData.total_trades || metricsData.totalTrades,
-      currentDrawdown: metricsData.current_drawdown || metricsData.currentDrawdown
+      total_return: metricsData.total_return,
+      sharpe_ratio: metricsData.sharpe_ratio,
+      max_drawdown: metricsData.max_drawdown,
+      win_rate: metricsData.win_rate,
+      total_trades: metricsData.total_trades,
+      current_drawdown: metricsData.current_drawdown
     };
     
-    // Filter out undefined values
+    // Filter out undefined/null values
     const cleanMetrics = Object.fromEntries(
-      Object.entries(updatedMetrics).filter(([_, value]) => value !== undefined)
+      Object.entries(updatedMetrics).filter(([, value]) => value !== undefined && value !== null)
     );
     
     if (Object.keys(cleanMetrics).length > 0) {
       setSessionMetrics(prev => {
-        const existing = prev[sessionId] || { totalReturn: 0, sharpeRatio: 0, maxDrawdown: 0, winRate: 0, totalTrades: 0, currentDrawdown: 0 };
-        const updated = { ...existing, ...cleanMetrics };
-        console.log('📊 Metrics update for session:', sessionId, 'Previous:', existing, 'New:', updated);
+        const existing = prev[sessionId] || { 
+          total_return: 0, sharpe_ratio: 0, max_drawdown: 0, win_rate: 0, total_trades: 0, current_drawdown: 0,
+          winning_trades: 0, losing_trades: 0, total_pnl: 0, total_pnl_percent: 0, max_drawdown_percent: 0
+        } as unknown as Metrics;
+        const updated = { ...existing, ...cleanMetrics } as Metrics;
+        console.log('📊 Metrics update for session:', sessionId, 'Incoming:', cleanMetrics, 'Result:', updated);
         return {
           ...prev,
-          [sessionId]: updated as Metrics
+          [sessionId]: updated
         };
       });
     }
@@ -779,12 +787,17 @@ export const ForwardTestingProvider: React.FC<ForwardTestingProviderProps> = ({ 
         };
         
         const initialMetrics: Metrics = {
-          totalReturn: 0,
-          sharpeRatio: 0,
-          maxDrawdown: 0,
-          winRate: 0,
-          totalTrades: 0,
-          currentDrawdown: 0
+          total_return: 0,
+          sharpe_ratio: 0,
+          max_drawdown: 0,
+          max_drawdown_percent: 0,
+          win_rate: 0,
+          total_trades: 0,
+          winning_trades: 0,
+          losing_trades: 0,
+          current_drawdown: 0,
+          total_pnl: 0,
+          total_pnl_percent: 0,
         };
         
         setSessionPortfolios(prev => ({ ...prev, [response.session_id]: initialPortfolio }));
